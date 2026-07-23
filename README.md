@@ -111,6 +111,8 @@ VOYAGE_API_KEY=pa-...
 python mongodb_rag.py
 ```
 
+![실행 화면](images/image01.png)
+
 또는 Jupyter 노트북으로 단계별 실행:
 
 ```bash
