@@ -95,9 +95,21 @@ VOYAGE_API_KEY=pa-...
 ```
 
 > **API 키 발급 방법**
-> - MongoDB Atlas: [무료 계정 생성](https://www.mongodb.com/cloud/atlas/register) → Database → Connect → Drivers
-> - OpenAI: [API Keys](https://platform.openai.com/api-keys)
-> - Voyage AI: [API Keys](https://dash.voyageai.com/api-keys)
+>
+> **① MongoDB Atlas URI 연결 문자열 생성**
+> 1. [무료 계정 생성](https://www.mongodb.com/cloud/atlas/register)
+> 2. Atlas UI → Database → 클러스터 우측 **Connect** 클릭
+> 3. **Drivers** 선택 → Python / pymongo 선택
+> 4. 연결 문자열 복사 (`mongodb+srv://<username>:<password>@<cluster>.mongodb.net/`)
+> - 상세 가이드: [Atlas URI 연결 문자열 생성](https://www.mongodb.com/ko-kr/docs/languages/python/pymongo-driver/current/get-started/#create-a-connection-string)
+>
+> **② Voyage AI API 키 발급**
+> 1. MongoDB Atlas에 접속 후 좌측 메뉴에서 **Integrations** → **Voyage AI** 선택
+> 2. API 키 생성
+> - 상세 가이드: [Voyage AI API 키 생성](https://www.mongodb.com/ko-kr/docs/voyageai/quickstart/?llm-provider=anthropic#create-a-model-api-key)
+>
+> **③ OpenAI API 키 발급**
+> - [OpenAI API Keys](https://platform.openai.com/api-keys)
 
 ### 4. MongoDB Atlas 클러스터 준비
 
