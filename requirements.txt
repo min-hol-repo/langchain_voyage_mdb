@@ -1,0 +1,26 @@
+# MongoDB RAG 시스템 의존성
+# pip install -r requirements.txt
+
+# LangChain 핵심
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+
+# LLM - OpenAI
+langchain-openai>=0.2.0
+openai>=1.40.0
+
+# 임베딩 - Voyage AI
+langchain-voyageai>=0.1.0
+voyageai>=0.3.0
+
+# 벡터 스토어 - MongoDB Atlas
+langchain-mongodb>=0.2.0
+pymongo>=4.8.0
+
+# 환경 변수
+python-dotenv>=1.0.0
+
+# Jupyter 노트북 (선택)
+jupyter>=1.0.0
+ipykernel>=6.0.0
