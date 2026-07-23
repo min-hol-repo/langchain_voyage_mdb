@@ -1,4 +1,4 @@
-# MongoDB 장애 대응 RAG 시스템
+# Hands-on Lab - MongoDB 기술문제 답변 RAG 챗봇 개발
 
 LangChain + Voyage AI + MongoDB Atlas + OpenAI를 활용한  
 **하이브리드 검색(Hybrid Search) + RRF** 기반 RAG(Retrieval-Augmented Generation) 파이프라인
