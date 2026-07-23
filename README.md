@@ -35,9 +35,9 @@ LangChain + Voyage AI + MongoDB Atlas + OpenAI를 활용한
 
 여러 검색 시스템의 결과를 순위 기반으로 통합하는 알고리즘입니다.
 
-$$
+```math
 \text{RRF\_score}(d) = \sum_{i \in \text{검색시스템}} \frac{1}{k + \text{rank}_i(d)}
-$$
+```
 
 - **벡터 검색** (시맨틱): 의미가 유사한 문서를 찾습니다
 - **전문 검색** (키워드): 정확한 키워드가 포함된 문서를 찾습니다
