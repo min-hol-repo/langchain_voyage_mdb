@@ -1,15 +1,15 @@
 """
-MongoDB 장애 대응 RAG (Retrieval-Augmented Generation) 시스템
-=============================================================
-사용 기술:
-  - LangChain    : RAG 파이프라인 구성
-  - Voyage AI    : voyage-4 텍스트 임베딩 (1024차원)
-  - MongoDB Atlas: 벡터 저장소 + 하이브리드 검색
-  - OpenAI       : GPT-4o-mini 답변 생성
-  - 하이브리드 검색: 벡터 검색(Semantic) + 전문 검색(Full-Text)
-  - RRF          : Reciprocal Rank Fusion 결과 융합
+MongoDB Troubleshooting RAG (Retrieval-Augmented Generation) System
+===================================================================
+Tech Stack:
+  - LangChain    : RAG pipeline construction
+  - Voyage AI    : voyage-4 text embeddings (1024 dimensions)
+  - MongoDB Atlas: Vector store + hybrid search
+  - OpenAI       : GPT-4o-mini answer generation
+  - Hybrid Search: Vector search (Semantic) + Full-text search (Keyword)
+  - RRF          : Reciprocal Rank Fusion result merging
 
-실행:
+Run:
   python mongodb_rag.py
 """
 
@@ -30,7 +30,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 # ============================================================
-# 환경 변수 로드
+# Load environment variables
 # ============================================================
 load_dotenv()
 
@@ -38,317 +38,317 @@ MONGODB_URI    = os.getenv("MONGODB_URI", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 VOYAGE_API_KEY = os.getenv("VOYAGE_API_KEY", "")
 
-# MongoDB 설정
+# MongoDB settings
 DB_NAME           = "mongodb_troubleshooting"
 COLLECTION_NAME   = "knowledge_base"
-VECTOR_INDEX_NAME = "vector_index"   # Atlas 벡터 검색 인덱스 이름
-SEARCH_INDEX_NAME = "search_index"   # Atlas 전문 검색 인덱스 이름
+VECTOR_INDEX_NAME = "vector_index"   # Atlas Vector Search index name
+SEARCH_INDEX_NAME = "search_index"   # Atlas Full-Text Search index name
 TEXT_FIELD        = "text"
 EMBEDDING_FIELD   = "embedding"
 
-# 모델 설정
-EMBEDDING_MODEL = "voyage-4"         # voyage-4 (1024차원)
+# Model settings
+EMBEDDING_MODEL = "voyage-4"         # voyage-4 (1024 dimensions)
 EMBEDDING_DIMS  = 1024
 LLM_MODEL       = "gpt-4o-mini"
 
 
 # ============================================================
-# MongoDB 장애 대응 지식 베이스 (샘플 데이터)
+# MongoDB Troubleshooting Knowledge Base (Sample Data)
 # ============================================================
 MONGODB_KNOWLEDGE_BASE = [
     {
-        "title": "Connection Pool 고갈 문제",
+        "title": "Connection Pool Exhaustion",
         "category": "connection",
-        "source": "MongoDB 연결 관리 가이드",
+        "source": "MongoDB Connection Management Guide",
         "text": (
-            "MongoDB Connection Pool 고갈 문제 해결 가이드\n\n"
-            "증상:\n"
-            "- 'connection pool exhausted' 또는 'too many connections' 오류 발생\n"
-            "- 애플리케이션 응답 지연 및 타임아웃\n"
-            "- mongostat에서 connections 수가 maxIncomingConnections에 근접\n\n"
-            "원인:\n"
-            "- 커넥션을 반납하지 않는 코드 (커넥션 누수)\n"
-            "- 갑작스러운 트래픽 증가\n"
-            "- maxPoolSize 설정이 너무 낮음\n"
-            "- 슬로우 쿼리로 인한 커넥션 점유 시간 증가\n\n"
-            "해결 방법:\n"
-            "1. 현재 커넥션 상태 확인\n"
+            "MongoDB Connection Pool Exhaustion Troubleshooting Guide\n\n"
+            "Symptoms:\n"
+            "- 'connection pool exhausted' or 'too many connections' errors\n"
+            "- Application response delays and timeouts\n"
+            "- connections count approaching maxIncomingConnections in mongostat\n\n"
+            "Causes:\n"
+            "- Code that does not release connections (connection leak)\n"
+            "- Sudden traffic spike\n"
+            "- maxPoolSize set too low\n"
+            "- Slow queries holding connections for too long\n\n"
+            "Solutions:\n"
+            "1. Check current connection status\n"
             "   db.serverStatus().connections\n\n"
-            "2. maxPoolSize 조정 (드라이버 설정)\n"
+            "2. Adjust maxPoolSize (driver settings)\n"
             "   MongoClient(uri, maxPoolSize=100, waitQueueTimeoutMS=5000)\n\n"
-            "3. 커넥션 누수 확인\n"
-            "   db.currentOp()로 장시간 열려있는 세션 확인\n\n"
-            "예방:\n"
-            "- 커넥션 풀 모니터링 (Atlas Metrics > Connections)\n"
-            "- 알림 설정 (connections > 임계값)\n"
-            "- 슬로우 쿼리 최적화로 커넥션 점유 시간 단축"
+            "3. Detect connection leaks\n"
+            "   Use db.currentOp() to find long-running sessions\n\n"
+            "Prevention:\n"
+            "- Monitor connection pool (Atlas Metrics > Connections)\n"
+            "- Set alerts when connections exceed threshold\n"
+            "- Optimize slow queries to reduce connection hold time"
         ),
     },
     {
-        "title": "인덱스 누락으로 인한 슬로우 쿼리",
+        "title": "Slow Queries due to Missing Indexes",
         "category": "performance",
-        "source": "MongoDB 성능 최적화 가이드",
+        "source": "MongoDB Performance Optimization Guide",
         "text": (
-            "인덱스 누락으로 인한 슬로우 쿼리 해결 가이드\n\n"
-            "증상:\n"
-            "- 쿼리 응답 시간이 수 초 이상\n"
-            "- Atlas Profiler에 COLLSCAN(전체 스캔) 표시\n"
-            "- CPU 사용률 급상승\n\n"
-            "진단 방법:\n"
-            "1. 슬로우 쿼리 로그 확인\n"
+            "Slow Queries due to Missing Indexes Troubleshooting Guide\n\n"
+            "Symptoms:\n"
+            "- Query response time of several seconds or more\n"
+            "- COLLSCAN (full collection scan) shown in Atlas Profiler\n"
+            "- CPU usage spike\n\n"
+            "Diagnosis:\n"
+            "1. Check slow query logs\n"
             "   db.system.profile.find({millis: {$gt: 100}}).sort({ts: -1}).limit(10)\n\n"
-            "2. explain()으로 실행 계획 분석\n"
+            "2. Analyze execution plan with explain()\n"
             "   db.collection.find(query).explain('executionStats')\n\n"
-            "해결 방법:\n"
-            "1. 필요한 인덱스 생성\n"
+            "Solutions:\n"
+            "1. Create required indexes\n"
             "   db.orders.createIndex({user_id: 1, created_at: -1})\n\n"
-            "2. 복합 인덱스 설계 원칙 (ESR 규칙)\n"
-            "   - Equality(동등 조건) 필드 먼저\n"
-            "   - Sort(정렬) 필드 다음\n"
-            "   - Range(범위 조건) 필드 마지막\n\n"
-            "예방:\n"
-            "- 새 쿼리 패턴 도입 시 인덱스 계획 수립\n"
-            "- Atlas Performance Advisor 권장 인덱스 모니터링"
+            "2. Compound index design principles (ESR Rule)\n"
+            "   - Equality fields first\n"
+            "   - Sort fields next\n"
+            "   - Range fields last\n\n"
+            "Prevention:\n"
+            "- Plan indexes when introducing new query patterns\n"
+            "- Monitor Atlas Performance Advisor recommendations"
         ),
     },
     {
-        "title": "Replication Lag 복제 지연 문제",
+        "title": "Replication Lag",
         "category": "replication",
-        "source": "MongoDB 복제 운영 가이드",
+        "source": "MongoDB Replication Operations Guide",
         "text": (
-            "MongoDB Replication Lag(복제 지연) 해결 가이드\n\n"
-            "증상:\n"
-            "- rs.printSlaveReplicationInfo()에서 지연 시간이 큰 경우\n"
-            "- Secondary에서 읽기 시 오래된 데이터 반환\n\n"
-            "원인:\n"
-            "- Primary에 과도한 쓰기 부하\n"
-            "- Secondary 서버의 리소스 부족 (CPU, I/O)\n"
-            "- 네트워크 대역폭 부족\n"
-            "- Oplog 크기 부족으로 인한 롤백\n\n"
-            "진단 방법:\n"
-            "1. 복제 상태 확인\n"
+            "MongoDB Replication Lag Troubleshooting Guide\n\n"
+            "Symptoms:\n"
+            "- Large lag shown in rs.printSlaveReplicationInfo()\n"
+            "- Stale data returned when reading from Secondary\n\n"
+            "Causes:\n"
+            "- Excessive write load on Primary\n"
+            "- Insufficient resources on Secondary (CPU, I/O)\n"
+            "- Limited network bandwidth\n"
+            "- Oplog size too small causing rollbacks\n\n"
+            "Diagnosis:\n"
+            "1. Check replication status\n"
             "   rs.status()\n"
             "   rs.printSlaveReplicationInfo()\n\n"
-            "해결 방법:\n"
-            "1. 즉각적 조치 - 부하 분산\n"
-            "   - 읽기 요청을 Primary로 임시 전환\n"
-            "   - 배치 작업 일시 중지\n\n"
-            "2. Oplog 크기 증설\n"
+            "Solutions:\n"
+            "1. Immediate action - load distribution\n"
+            "   - Temporarily redirect reads to Primary\n"
+            "   - Pause batch jobs\n\n"
+            "2. Increase Oplog size\n"
             "   mongod.conf: replication.oplogSizeMB: 51200\n\n"
-            "예방:\n"
-            "- Oplog 크기를 최소 24-72시간 분량으로 설정\n"
-            "- Secondary 서버 사양을 Primary와 동일하게 유지"
+            "Prevention:\n"
+            "- Set Oplog size to cover at least 24-72 hours of operations\n"
+            "- Keep Secondary server specs equal to Primary"
         ),
     },
     {
-        "title": "WiredTiger 캐시 메모리 부족",
+        "title": "WiredTiger Cache Memory Shortage",
         "category": "memory",
-        "source": "MongoDB 메모리 관리 가이드",
+        "source": "MongoDB Memory Management Guide",
         "text": (
-            "WiredTiger 캐시 메모리 부족 문제 해결 가이드\n\n"
-            "증상:\n"
-            "- 쿼리 성능 급격히 저하\n"
-            "- 디스크 I/O 급증\n"
-            "- 'WiredTiger eviction' 경고 메시지\n"
-            "- 서버 스왑(SWAP) 사용 증가\n\n"
-            "원인:\n"
-            "- 데이터셋이 WiredTiger 캐시 크기 초과\n"
-            "- 메모리 설정이 서버 사양에 비해 낮게 설정됨\n\n"
-            "해결 방법:\n"
-            "1. WiredTiger 캐시 크기 증설\n"
+            "WiredTiger Cache Memory Shortage Troubleshooting Guide\n\n"
+            "Symptoms:\n"
+            "- Sudden query performance degradation\n"
+            "- Disk I/O spike\n"
+            "- 'WiredTiger eviction' warning messages\n"
+            "- Increased server swap usage\n\n"
+            "Causes:\n"
+            "- Dataset exceeds WiredTiger cache size\n"
+            "- Memory settings too low for server specs\n\n"
+            "Solutions:\n"
+            "1. Increase WiredTiger cache size\n"
             "   mongod.conf:\n"
-            "     storage.wiredTiger.engineConfig.cacheSizeGB: 4  # RAM의 50% 권장\n\n"
-            "2. 불필요한 인덱스 제거로 메모리 절약\n\n"
-            "예방:\n"
-            "- 캐시 히트율 지속 모니터링 (목표: 95% 이상)\n"
-            "- Atlas 사용 시 적절한 인스턴스 티어 선택"
+            "     storage.wiredTiger.engineConfig.cacheSizeGB: 4  # Recommended: 50% of RAM\n\n"
+            "2. Reduce memory usage by removing unnecessary indexes\n\n"
+            "Prevention:\n"
+            "- Monitor cache hit ratio continuously (target: 95%+)\n"
+            "- Choose appropriate Atlas instance tier"
         ),
     },
     {
-        "title": "Disk Space 디스크 공간 부족 장애",
+        "title": "Disk Space Shortage",
         "category": "storage",
-        "source": "MongoDB 스토리지 관리 가이드",
+        "source": "MongoDB Storage Management Guide",
         "text": (
-            "MongoDB Disk Space 부족 장애 해결 가이드\n\n"
-            "증상:\n"
-            "- 'no space left on device' 오류\n"
-            "- 쓰기 작업 실패\n"
-            "- MongoDB 프로세스 비정상 종료\n\n"
-            "즉각적인 조치:\n"
-            "1. 현재 디스크 사용량 확인\n"
-            "   df -h  (OS 레벨)\n"
-            "   db.stats()  (MongoDB 레벨)\n\n"
-            "해결 방법:\n"
-            "1. 오래된 데이터 삭제\n"
+            "MongoDB Disk Space Shortage Troubleshooting Guide\n\n"
+            "Symptoms:\n"
+            "- 'no space left on device' error\n"
+            "- Write operations failing\n"
+            "- MongoDB process abnormal termination\n\n"
+            "Immediate Actions:\n"
+            "1. Check current disk usage\n"
+            "   df -h  (OS level)\n"
+            "   db.stats()  (MongoDB level)\n\n"
+            "Solutions:\n"
+            "1. Archive or delete old data\n"
             "   db.logs.deleteMany({createdAt: {$lt: new Date('2024-01-01')}})\n\n"
-            "2. compact 명령으로 공간 회수\n"
+            "2. Reclaim space with compact command\n"
             "   db.runCommand({compact: 'collection_name'})\n\n"
-            "3. TTL 인덱스로 자동 데이터 만료\n"
+            "3. Set TTL index for automatic data expiration\n"
             "   db.logs.createIndex({createdAt: 1}, {expireAfterSeconds: 2592000})\n\n"
-            "예방:\n"
-            "- 디스크 사용량 80% 도달 시 알림 설정\n"
-            "- Atlas Online Archive 활용"
+            "Prevention:\n"
+            "- Set alerts when disk usage reaches 80%\n"
+            "- Use Atlas Online Archive"
         ),
     },
     {
-        "title": "Lock 경합 (Lock Contention) 문제",
+        "title": "Lock Contention",
         "category": "locking",
-        "source": "MongoDB 락 관리 가이드",
+        "source": "MongoDB Lock Management Guide",
         "text": (
-            "MongoDB Lock 경합(Lock Contention) 해결 가이드\n\n"
-            "증상:\n"
-            "- 전반적인 성능 저하\n"
-            "- globalLock.ratio 값이 0.5 이상\n"
-            "- 쿼리 대기 시간 증가\n\n"
-            "진단 방법:\n"
-            "1. 현재 실행 중인 작업 확인\n"
+            "MongoDB Lock Contention Troubleshooting Guide\n\n"
+            "Symptoms:\n"
+            "- Overall performance degradation\n"
+            "- globalLock.ratio value above 0.5\n"
+            "- Increased query wait times\n\n"
+            "Diagnosis:\n"
+            "1. Check currently running operations\n"
             "   db.currentOp({active: true, waitingForLock: true})\n\n"
-            "해결 방법:\n"
-            "1. 장시간 실행 중인 작업 중단\n"
+            "Solutions:\n"
+            "1. Kill long-running operations\n"
             "   db.killOp(opid)\n\n"
-            "2. 대용량 작업 배치 처리로 분할\n"
-            "   - 한 번에 1000건씩 처리하고 sleep 추가\n\n"
-            "예방:\n"
-            "- 대용량 작업 시 배치 처리 패턴 적용\n"
-            "- 모든 쿼리에 적절한 인덱스 확보"
+            "2. Split large operations into smaller batches\n"
+            "   - Process 1000 documents at a time with sleep between batches\n\n"
+            "Prevention:\n"
+            "- Apply batch processing pattern for large operations\n"
+            "- Ensure all queries have appropriate indexes"
         ),
     },
     {
-        "title": "Primary 선출 실패 (Election Failure)",
+        "title": "Primary Election Failure",
         "category": "replication",
-        "source": "MongoDB 복제셋 운영 가이드",
+        "source": "MongoDB Replica Set Operations Guide",
         "text": (
-            "MongoDB Replica Set Primary 선출 실패 해결 가이드\n\n"
-            "증상:\n"
-            "- 모든 멤버가 SECONDARY 또는 UNKNOWN 상태\n"
-            "- 쓰기 작업 불가 ('not master' 오류)\n"
-            "- rs.status()에서 no primary 상태\n\n"
-            "원인:\n"
-            "- 네트워크 파티션 (스플릿 브레인)\n"
-            "- 과반수(Majority) 멤버에 연결 불가\n\n"
-            "해결 방법:\n"
-            "1. 네트워크 복구 후 자동 선출 대기 (통상 10-30초)\n\n"
-            "2. 특정 멤버 우선순위 조정\n"
+            "MongoDB Replica Set Primary Election Failure Troubleshooting Guide\n\n"
+            "Symptoms:\n"
+            "- All members in SECONDARY or UNKNOWN state\n"
+            "- Write operations unavailable ('not master' error)\n"
+            "- No primary shown in rs.status()\n\n"
+            "Causes:\n"
+            "- Network partition (split-brain scenario)\n"
+            "- Cannot reach majority of voting members\n\n"
+            "Solutions:\n"
+            "1. Wait for automatic election after network recovery (typically 10-30 seconds)\n\n"
+            "2. Adjust member priority to guide Primary election\n"
             "   cfg = rs.conf()\n"
             "   cfg.members[0].priority = 2\n"
             "   rs.reconfig(cfg)\n\n"
-            "예방:\n"
-            "- 항상 홀수 개의 투표 멤버 유지 (3, 5, 7개)\n"
-            "- 멤버를 서로 다른 AZ에 배포"
+            "Prevention:\n"
+            "- Always maintain an odd number of voting members (3, 5, 7)\n"
+            "- Deploy members across different Availability Zones"
         ),
     },
     {
-        "title": "Atlas Vector Search 인덱스 오류",
+        "title": "Atlas Vector Search Index Error",
         "category": "search",
-        "source": "MongoDB Atlas 검색 가이드",
+        "source": "MongoDB Atlas Search Guide",
         "text": (
-            "MongoDB Atlas Vector Search 인덱스 오류 해결 가이드\n\n"
-            "증상:\n"
-            "- '$vectorSearch is not allowed' 오류\n"
-            "- 검색 결과가 빈 배열 반환\n"
-            "- 인덱스 상태가 FAILED 또는 BUILDING\n\n"
-            "원인:\n"
-            "- Atlas Search 인덱스가 생성되지 않음\n"
-            "- 인덱스 이름 불일치\n"
-            "- numDimensions가 임베딩 모델 차원수와 불일치\n\n"
-            "해결 방법:\n"
-            "1. Vector Search 인덱스 설정 확인\n"
-            "   numDimensions: 1024  (voyage-4 모델)\n\n"
-            "2. 인덱스 이름 코드와 일치 여부 확인\n\n"
-            "3. 인덱스 재빌드 대기 (대용량 컬렉션은 수 분 소요)\n\n"
-            "예방:\n"
-            "- 인덱스 이름을 코드 상수로 관리"
+            "MongoDB Atlas Vector Search Index Error Troubleshooting Guide\n\n"
+            "Symptoms:\n"
+            "- '$vectorSearch is not allowed' error\n"
+            "- Empty array returned from search\n"
+            "- Index status shows FAILED or BUILDING\n\n"
+            "Causes:\n"
+            "- Atlas Search index not created\n"
+            "- Index name mismatch\n"
+            "- numDimensions does not match embedding model dimensions\n\n"
+            "Solutions:\n"
+            "1. Verify Vector Search index settings\n"
+            "   numDimensions: 1024  (for voyage-4 model)\n\n"
+            "2. Verify index name matches in code\n\n"
+            "3. Wait for index rebuild (large collections may take several minutes)\n\n"
+            "Prevention:\n"
+            "- Manage index names as code constants"
         ),
     },
     {
-        "title": "OOM (Out of Memory) 킬러 발생",
+        "title": "OOM (Out of Memory) Killer",
         "category": "memory",
-        "source": "MongoDB 메모리 관리 가이드",
+        "source": "MongoDB Memory Management Guide",
         "text": (
-            "MongoDB OOM (Out of Memory) 킬러 발생 해결 가이드\n\n"
-            "증상:\n"
-            "- MongoDB 프로세스가 갑자기 종료됨\n"
-            "- 'Killed process (mongod)' 로그\n"
-            "- 시스템 메모리 사용량 100% 도달\n\n"
-            "원인:\n"
-            "- WiredTiger 캐시 + 인덱스가 가용 메모리 초과\n"
-            "- 다른 프로세스와의 메모리 경쟁\n\n"
-            "해결 방법:\n"
-            "1. WiredTiger 캐시 크기 제한\n"
-            "   cacheSizeGB: 2  (가용 메모리의 50% 이하)\n\n"
-            "2. Swap 설정\n"
+            "MongoDB OOM (Out of Memory) Killer Troubleshooting Guide\n\n"
+            "Symptoms:\n"
+            "- MongoDB process suddenly terminates\n"
+            "- 'Killed process (mongod)' in system logs\n"
+            "- System memory usage reaches 100%\n\n"
+            "Causes:\n"
+            "- WiredTiger cache + indexes exceed available memory\n"
+            "- Memory competition with other processes\n\n"
+            "Solutions:\n"
+            "1. Limit WiredTiger cache size\n"
+            "   cacheSizeGB: 2  (50% or less of available memory)\n\n"
+            "2. Configure Swap space\n"
             "   fallocate -l 4G /swapfile && mkswap /swapfile && swapon /swapfile\n\n"
-            "예방:\n"
-            "- 메모리 사용률 85% 알림 설정\n"
-            "- Atlas 사용 시 적절한 티어 선택"
+            "Prevention:\n"
+            "- Set alerts when memory usage reaches 85%\n"
+            "- Choose the appropriate Atlas tier"
         ),
     },
     {
-        "title": "Mongodump / Mongorestore 백업 및 복구",
+        "title": "Mongodump / Mongorestore Backup and Recovery",
         "category": "backup",
-        "source": "MongoDB 백업 복구 가이드",
+        "source": "MongoDB Backup and Recovery Guide",
         "text": (
-            "MongoDB 백업 및 복구 완전 가이드\n\n"
-            "Mongodump (백업):\n"
-            "1. 전체 데이터베이스 백업\n"
+            "MongoDB Backup and Recovery Complete Guide\n\n"
+            "Mongodump (Backup):\n"
+            "1. Full database backup\n"
             "   mongodump --uri='mongodb+srv://...' --out=/backup/$(date +%Y%m%d)\n\n"
-            "2. 특정 컬렉션 백업\n"
+            "2. Specific collection backup\n"
             "   mongodump --uri='...' --db=mydb --collection=users --out=/backup/\n\n"
-            "Mongorestore (복구):\n"
-            "1. 전체 복구\n"
+            "Mongorestore (Recovery):\n"
+            "1. Full restore\n"
             "   mongorestore --uri='mongodb+srv://...' /backup/20240101/\n\n"
-            "2. 병렬 복구로 속도 향상\n"
+            "2. Faster restore with parallel collections\n"
             "   mongorestore --uri='...' --numParallelCollections=4 /backup/\n\n"
-            "Atlas 백업:\n"
+            "Atlas Backup:\n"
             "- Atlas > Cluster > Backup > Take Snapshot\n"
-            "- Point-in-Time Recovery (PITR) 활용\n"
-            "- M10 이상에서 Continuous Cloud Backup 권장\n\n"
-            "주의사항:\n"
-            "- Replica Set에서 --oplog 옵션으로 일관성 확보\n"
-            "- 대용량 백업 시 --gzip 옵션으로 압축"
+            "- Use Point-in-Time Recovery (PITR)\n"
+            "- Continuous Cloud Backup recommended for M10+\n\n"
+            "Notes:\n"
+            "- Use --oplog option in Replica Set for consistency\n"
+            "- Use --gzip option to compress large backups"
         ),
     },
 ]
 
 
 # ============================================================
-# 컴포넌트 초기화
+# Component Initialization
 # ============================================================
 
 def get_mongodb_client() -> MongoClient:
-    """MongoDB Atlas에 연결합니다."""
+    """Connect to MongoDB Atlas."""
     if not MONGODB_URI:
-        raise ValueError("MONGODB_URI 환경 변수가 설정되지 않았습니다.")
+        raise ValueError("MONGODB_URI environment variable is not set.")
     client = MongoClient(MONGODB_URI)
     client.admin.command("ping")
-    print("✅ MongoDB Atlas 연결 성공")
+    print("✅ Connected to MongoDB Atlas")
     return client
 
 
 def get_embeddings() -> VoyageAIEmbeddings:
-    """Voyage AI 임베딩 모델을 초기화합니다."""
+    """Initialize Voyage AI embedding model."""
     if not VOYAGE_API_KEY:
-        raise ValueError("VOYAGE_API_KEY 환경 변수가 설정되지 않았습니다.")
+        raise ValueError("VOYAGE_API_KEY environment variable is not set.")
     emb = VoyageAIEmbeddings(voyage_api_key=VOYAGE_API_KEY, model=EMBEDDING_MODEL)
-    print(f"✅ Voyage AI 임베딩 초기화 완료 (모델: {EMBEDDING_MODEL}, {EMBEDDING_DIMS}차원)")
+    print(f"✅ Voyage AI embeddings initialized (model: {EMBEDDING_MODEL}, {EMBEDDING_DIMS} dims)")
     return emb
 
 
 def get_llm() -> ChatOpenAI:
-    """OpenAI LLM을 초기화합니다."""
+    """Initialize OpenAI LLM."""
     if not OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY 환경 변수가 설정되지 않았습니다.")
+        raise ValueError("OPENAI_API_KEY environment variable is not set.")
     llm = ChatOpenAI(model=LLM_MODEL, temperature=0, openai_api_key=OPENAI_API_KEY)
-    print(f"✅ OpenAI LLM 초기화 완료 (모델: {LLM_MODEL})")
+    print(f"✅ OpenAI LLM initialized (model: {LLM_MODEL})")
     return llm
 
 
 # ============================================================
-# 문서 준비 및 Atlas 업로드
+# Document Preparation and Atlas Upload
 # ============================================================
 
 def prepare_documents() -> List[Document]:
-    """지식 베이스 데이터를 LangChain Document 형식으로 변환합니다."""
+    """Convert knowledge base data to LangChain Document format."""
     docs = [
         Document(
             page_content=item["text"],
@@ -360,7 +360,7 @@ def prepare_documents() -> List[Document]:
         )
         for item in MONGODB_KNOWLEDGE_BASE
     ]
-    print(f"✅ {len(docs)}개 문서 준비 완료")
+    print(f"✅ {len(docs)} documents prepared")
     return docs
 
 
@@ -370,13 +370,13 @@ def load_documents_to_atlas(
     docs: List[Document],
     force_reload: bool = False,
 ) -> MongoDBAtlasVectorSearch:
-    """문서를 MongoDB Atlas에 업로드하고 벡터 스토어를 반환합니다."""
+    """Upload documents to MongoDB Atlas and return the vector store."""
     existing_count = collection.count_documents({})
 
     if not force_reload and existing_count > 0:
-        print(f"✅ 기존 데이터 사용 중 ({existing_count}개 문서)")
+        print(f"✅ Using existing data ({existing_count} documents)")
     else:
-        print(f"📥 {len(docs)}개 문서 업로드 중... (임베딩 생성에 수십 초 소요)")
+        print(f"📥 Uploading {len(docs)} documents to MongoDB Atlas... (may take a moment)")
         collection.drop()
         MongoDBAtlasVectorSearch.from_documents(
             documents=docs,
@@ -384,7 +384,7 @@ def load_documents_to_atlas(
             collection=collection,
             index_name=VECTOR_INDEX_NAME,
         )
-        print(f"✅ 업로드 완료 ({collection.count_documents({})}개)")
+        print(f"✅ Upload complete ({collection.count_documents({})} documents)")
 
     return MongoDBAtlasVectorSearch(
         collection=collection,
@@ -396,7 +396,7 @@ def load_documents_to_atlas(
 
 
 # ============================================================
-# Atlas 인덱스 자동 생성 (pymongo 4.7+ SearchIndexModel)
+# Atlas Index Auto-Creation (pymongo 4.7+ SearchIndexModel)
 # ============================================================
 
 def create_atlas_indexes(
@@ -404,14 +404,15 @@ def create_atlas_indexes(
     force_recreate: bool = False,
 ) -> bool:
     """
-    Vector Search 인덱스와 Atlas Search 인덱스를 코드에서 자동으로 생성합니다.
+    Automatically create Vector Search and Atlas Search indexes from code.
+    Uses pymongo 4.7+ SearchIndexModel / create_search_indexes() API.
 
     Args:
-        collection    : MongoDB 컬렉션
-        force_recreate: True이면 기존 인덱스를 삭제하고 재생성
+        collection    : MongoDB collection
+        force_recreate: If True, drops and recreates existing indexes
 
     Returns:
-        새로 생성된 인덱스가 있으면 True
+        True if new indexes were created
     """
     try:
         existing = {idx["name"] for idx in collection.list_search_indexes()}
@@ -420,14 +421,14 @@ def create_atlas_indexes(
 
     to_create: List[SearchIndexModel] = []
 
-    # ── [1] Vector Search 인덱스 ──────────────────────────────
+    # ── [1] Vector Search Index ────────────────────────────────
     if VECTOR_INDEX_NAME in existing:
         if force_recreate:
-            print(f"  기존 인덱스 삭제: {VECTOR_INDEX_NAME}")
+            print(f"  Dropping existing index: {VECTOR_INDEX_NAME}")
             collection.drop_search_index(VECTOR_INDEX_NAME)
             _wait_for_index_drop(collection, VECTOR_INDEX_NAME)
         else:
-            print(f"  ✅ 이미 존재: {VECTOR_INDEX_NAME}")
+            print(f"  ✅ Already exists: {VECTOR_INDEX_NAME}")
 
     if VECTOR_INDEX_NAME not in existing or force_recreate:
         to_create.append(
@@ -437,7 +438,7 @@ def create_atlas_indexes(
                         {
                             "type": "vector",
                             "path": EMBEDDING_FIELD,
-                            "numDimensions": EMBEDDING_DIMS,  # voyage-4: 1024차원
+                            "numDimensions": EMBEDDING_DIMS,  # voyage-4: 1024 dims
                             "similarity": "cosine",
                         }
                     ]
@@ -447,14 +448,14 @@ def create_atlas_indexes(
             )
         )
 
-    # ── [2] Atlas Search (전문 검색) 인덱스 ──────────────────
+    # ── [2] Atlas Search (Full-Text) Index ────────────────────
     if SEARCH_INDEX_NAME in existing:
         if force_recreate:
-            print(f"  기존 인덱스 삭제: {SEARCH_INDEX_NAME}")
+            print(f"  Dropping existing index: {SEARCH_INDEX_NAME}")
             collection.drop_search_index(SEARCH_INDEX_NAME)
             _wait_for_index_drop(collection, SEARCH_INDEX_NAME)
         else:
-            print(f"  ✅ 이미 존재: {SEARCH_INDEX_NAME}")
+            print(f"  ✅ Already exists: {SEARCH_INDEX_NAME}")
 
     if SEARCH_INDEX_NAME not in existing or force_recreate:
         to_create.append(
@@ -464,7 +465,7 @@ def create_atlas_indexes(
                         "dynamic": False,
                         "fields": {
                             TEXT_FIELD: {"type": "string"},
-                            "title":    {"type": "string"},  # 최상위 레벨 title
+                            "title":    {"type": "string"},  # top-level title field
                         },
                     }
                 },
@@ -475,7 +476,7 @@ def create_atlas_indexes(
 
     if to_create:
         names = [m.document["name"] for m in to_create]
-        print(f"  인덱스 생성 요청: {names}")
+        print(f"  Requesting index creation: {names}")
         collection.create_search_indexes(to_create)
         return True
 
@@ -488,7 +489,7 @@ def _wait_for_index_drop(
     timeout: int = 120,
     poll_interval: int = 3,
 ) -> None:
-    """인덱스 삭제 완료까지 대기 (내부 헬퍼)."""
+    """Wait until the index is fully dropped (internal helper)."""
     start = time.time()
     while time.time() - start < timeout:
         names = {idx["name"] for idx in collection.list_search_indexes()}
@@ -504,20 +505,20 @@ def wait_for_indexes_ready(
     poll_interval: int = 5,
 ) -> bool:
     """
-    지정한 인덱스들이 모두 'READY' 상태가 될 때까지 폴링합니다.
+    Poll until all specified indexes reach 'READY' status.
 
     Args:
-        collection   : MongoDB 컬렉션
-        index_names  : 대기할 인덱스 이름 목록
-        timeout      : 최대 대기 시간 (초)
-        poll_interval: 폴링 간격 (초)
+        collection   : MongoDB collection
+        index_names  : List of index names to wait for
+        timeout      : Maximum wait time in seconds
+        poll_interval: Polling interval in seconds
 
     Returns:
-        모든 인덱스 READY이면 True, 타임아웃이면 False
+        True if all indexes are READY, False if timed out
     """
     target = set(index_names)
     start  = time.time()
-    print(f"  인덱스 빌드 대기 중 (최대 {timeout}초)...")
+    print(f"  Waiting for indexes to become READY (max {timeout}s)...")
 
     while time.time() - start < timeout:
         ready, parts = set(), []
@@ -532,12 +533,12 @@ def wait_for_indexes_ready(
         print(f"  [{elapsed:>3}s] {' | '.join(parts)}", end="\r", flush=True)
 
         if ready == target:
-            print(f"\n  ✅ 모든 인덱스 READY! ({elapsed}초 소요)")
+            print(f"\n  ✅ All indexes READY! ({elapsed}s elapsed)")
             return True
 
         time.sleep(poll_interval)
 
-    print(f"\n  ⚠️  타임아웃 ({timeout}초)")
+    print(f"\n  ⚠️  Timeout ({timeout}s): some indexes are not ready yet.")
     return False
 
 
@@ -546,8 +547,8 @@ def setup_indexes(
     force_recreate: bool = False,
     wait_timeout: int = 300,
 ) -> None:
-    """인덱스 생성 + READY 대기를 한 번에 처리하는 편의 함수."""
-    print("\n[인덱스 설정]")
+    """Convenience function: create indexes and wait for READY status."""
+    print("\n[Index Setup]")
     created = create_atlas_indexes(collection, force_recreate=force_recreate)
     if created:
         wait_for_indexes_ready(
@@ -556,11 +557,11 @@ def setup_indexes(
             timeout=wait_timeout,
         )
     else:
-        print("  → 모든 인덱스가 이미 존재합니다.")
+        print("  → All indexes already exist. Skipping.")
 
 
 # ============================================================
-# 하이브리드 검색: 벡터 검색 + 전문 검색
+# Hybrid Search: Vector Search + Full-Text Search
 # ============================================================
 
 def vector_search(
@@ -569,10 +570,10 @@ def vector_search(
     k: int = 10,
 ) -> List[Dict[str, Any]]:
     """
-    $vectorSearch를 사용한 시맨틱(의미 기반) 검색.
+    Semantic search using $vectorSearch.
 
-    langchain-mongodb는 metadata를 최상위 레벨에 펼쳐서 저장합니다.
-    예: {"text": ..., "embedding": [...], "title": ..., "category": ...}
+    Note: langchain-mongodb stores metadata fields at the top level of the document.
+    e.g., {"text": ..., "embedding": [...], "title": ..., "category": ...}
     """
     pipeline = [
         {
@@ -580,7 +581,7 @@ def vector_search(
                 "index": VECTOR_INDEX_NAME,
                 "path": EMBEDDING_FIELD,
                 "queryVector": query_embedding,
-                "numCandidates": k * 10,
+                "numCandidates": k * 10,  # candidate pool = k * 10 recommended
                 "limit": k,
             }
         },
@@ -588,7 +589,7 @@ def vector_search(
             "$project": {
                 "_id": 1,
                 TEXT_FIELD: 1,
-                "title": 1,       # 최상위 레벨 필드
+                "title": 1,       # top-level field
                 "category": 1,
                 "source": 1,
                 "vector_score": {"$meta": "vectorSearchScore"},
@@ -604,8 +605,8 @@ def text_search(
     k: int = 10,
 ) -> List[Dict[str, Any]]:
     """
-    $search를 사용한 전문 검색(Full-Text Search).
-    Atlas Search 인덱스(search_index)가 필요합니다.
+    Full-text search using $search (Atlas Search).
+    Requires the Atlas Search index (search_index) to be created.
     """
     pipeline = [
         {
@@ -613,7 +614,7 @@ def text_search(
                 "index": SEARCH_INDEX_NAME,
                 "text": {
                     "query": query,
-                    "path": [TEXT_FIELD, "title"],  # 최상위 레벨 필드
+                    "path": [TEXT_FIELD, "title"],  # top-level fields
                 },
             }
         },
@@ -622,7 +623,7 @@ def text_search(
             "$project": {
                 "_id": 1,
                 TEXT_FIELD: 1,
-                "title": 1,       # 최상위 레벨 필드
+                "title": 1,       # top-level field
                 "category": 1,
                 "source": 1,
                 "text_score": {"$meta": "searchScore"},
@@ -642,18 +643,18 @@ def reciprocal_rank_fusion(
     rrf_k: int = 60,
 ) -> List[Dict[str, Any]]:
     """
-    RRF(Reciprocal Rank Fusion)으로 벡터 검색과 전문 검색 결과를 융합합니다.
+    Merge vector search and full-text search results using RRF.
 
-    RRF 공식:
+    RRF Formula:
         RRF_score(d) = Σ  1 / (k + rank_i(d))
 
     Args:
-        vector_results: 벡터 검색 결과
-        text_results  : 전문 검색 결과
-        rrf_k         : RRF 상수 k (기본값 60)
+        vector_results: Vector search results (with ranks)
+        text_results  : Full-text search results (with ranks)
+        rrf_k         : RRF constant k (default 60)
 
     Returns:
-        RRF 점수 기준 내림차순 정렬 결과
+        Merged results sorted by RRF score (descending)
     """
     rrf_map: Dict[str, Dict] = {}
 
@@ -685,16 +686,16 @@ def reciprocal_rank_fusion(
 
 
 def print_rrf_results(rrf_results: List[Dict], top_k: int = 5) -> None:
-    """RRF 결과 테이블을 출력합니다."""
+    """Print the RRF results table."""
     print("\n" + "=" * 75)
-    print("  RRF (Reciprocal Rank Fusion) 검색 결과")
+    print("  RRF (Reciprocal Rank Fusion) Search Results")
     print("=" * 75)
-    print(f"  {'순위':<4} {'문서 제목':<32} {'벡터순위':<8} {'텍스트순위':<10} {'RRF점수':<12} 카테고리")
+    print(f"  {'Rank':<4} {'Document Title':<32} {'VecRank':<8} {'TxtRank':<10} {'RRF Score':<12} Category")
     print("-" * 75)
 
     for i, result in enumerate(rrf_results[:top_k], start=1):
         doc      = result["doc"]
-        title    = (doc.get("title")    or "제목없음")[:30]
+        title    = (doc.get("title")    or "Untitled")[:30]
         category = (doc.get("category") or "-")
         v_rank   = str(result["vector_rank"]) if result["vector_rank"] else "-"
         t_rank   = str(result["text_rank"])   if result["text_rank"]   else "-"
@@ -702,13 +703,13 @@ def print_rrf_results(rrf_results: List[Dict], top_k: int = 5) -> None:
         print(f"  {i:<4} {title:<32} {v_rank:<8} {t_rank:<10} {rrf_score:.6f}   {category}")
 
     print("=" * 75)
-    print("\n  [점수 상세]")
+    print("\n  [Score Details]")
     for i, result in enumerate(rrf_results[:top_k], start=1):
         doc     = result["doc"]
-        title   = (doc.get("title") or "제목없음")[:25]
-        v_str   = f"{result['vector_score']:.4f}" if result["vector_score"] is not None else "없음"
-        t_str   = f"{result['text_score']:.4f}"   if result["text_score"]   is not None else "없음"
-        print(f"  {i}. {title}: 벡터점수={v_str}, 텍스트점수={t_str}, RRF={result['rrf_score']:.6f}")
+        title   = (doc.get("title") or "Untitled")[:25]
+        v_str   = f"{result['vector_score']:.4f}" if result["vector_score"] is not None else "N/A"
+        t_str   = f"{result['text_score']:.4f}"   if result["text_score"]   is not None else "N/A"
+        print(f"  {i}. {title}: vector={v_str}, text={t_str}, RRF={result['rrf_score']:.6f}")
     print()
 
 
@@ -720,13 +721,13 @@ def hybrid_search(
     rrf_k: int = 60,
     verbose: bool = True,
 ) -> List[Dict]:
-    """하이브리드 검색 (벡터 + 전문 검색 + RRF)."""
+    """Hybrid search: Vector Search + Full-Text Search + RRF fusion."""
     query_embedding = embeddings.embed_query(query)
     v_results = vector_search(collection, query_embedding, k=k)
     t_results = text_search(collection, query, k=k)
 
     if verbose:
-        print(f"  → 벡터 검색: {len(v_results)}개  |  전문 검색: {len(t_results)}개")
+        print(f"  → Vector search: {len(v_results)} results  |  Full-text search: {len(t_results)} results")
 
     rrf_results = reciprocal_rank_fusion(v_results, t_results, rrf_k=rrf_k)
 
@@ -737,40 +738,40 @@ def hybrid_search(
 
 
 # ============================================================
-# RAG 체인 구성
+# RAG Chain
 # ============================================================
 
 def format_context(rrf_results: List[Dict], top_k: int = 3) -> str:
-    """RRF 결과 상위 문서로 RAG 컨텍스트를 구성합니다."""
+    """Build RAG context from the top RRF results."""
     parts = []
     for i, result in enumerate(rrf_results[:top_k], start=1):
         doc     = result["doc"]
         title   = doc.get("title", "")
         content = doc.get(TEXT_FIELD, "")
         parts.append(
-            f"--- 문서 {i}: {title} (RRF 점수: {result['rrf_score']:.4f}) ---\n{content}"
+            f"--- Document {i}: {title} (RRF Score: {result['rrf_score']:.4f}) ---\n{content}"
         )
     return "\n\n".join(parts)
 
 
 def build_rag_chain(llm: ChatOpenAI):
-    """LangChain LCEL로 RAG 체인을 구성합니다."""
+    """Build a RAG chain using LangChain LCEL."""
     prompt = ChatPromptTemplate.from_template(
-        """당신은 MongoDB 전문가입니다.
-주어진 컨텍스트를 바탕으로 MongoDB 장애와 관련된 질문에 정확하고 실용적인 답변을 제공하세요.
+        """You are a MongoDB expert.
+Using the provided context, give accurate and practical answers to MongoDB troubleshooting questions.
 
-[참고 문서]
+[Reference Documents]
 {context}
 
-[질문]
+[Question]
 {question}
 
-[답변 지침]
-1. 참고 문서의 정보를 우선적으로 활용하세요.
-2. 구체적인 해결 방법과 명령어를 포함하세요.
-3. 단계적으로 설명하세요 (즉각 조치 → 근본 원인 해결 → 예방).
+[Answer Guidelines]
+1. Prioritize information from the reference documents.
+2. Include specific solutions and commands.
+3. Explain step by step: immediate action → root cause resolution → prevention.
 
-[답변]
+[Answer]
 """
     )
     return prompt | llm | StrOutputParser()
@@ -786,12 +787,12 @@ def ask_mongodb_question(
     rrf_k: int = 60,
     verbose: bool = True,
 ) -> str:
-    """MongoDB 장애 관련 질문에 RAG 기반으로 답변합니다."""
+    """Answer a MongoDB troubleshooting question using RAG."""
     print(f"\n{'='*75}")
-    print(f"  질문: {question}")
+    print(f"  Question: {question}")
     print(f"{'='*75}")
 
-    print("\n[검색 중...]")
+    print("\n[Searching...]")
     rrf_results = hybrid_search(
         collection=collection, query=question, embeddings=embeddings,
         k=search_k, rrf_k=rrf_k, verbose=verbose,
@@ -799,11 +800,11 @@ def ask_mongodb_question(
 
     context = format_context(rrf_results, top_k=context_top_k)
 
-    print("[답변 생성 중...]")
+    print("[Generating answer...]")
     answer = build_rag_chain(llm).invoke({"context": context, "question": question})
 
     print(f"\n{'─'*75}")
-    print("  [답변]")
+    print("  [Answer]")
     print(f"{'─'*75}")
     print(answer)
     print(f"{'='*75}\n")
@@ -811,67 +812,63 @@ def ask_mongodb_question(
 
 
 # ============================================================
-# 메인 실행
+# Main
 # ============================================================
 
 def main():
-    """메인 실행 함수"""
+    """Main execution function."""
 
-    # ── 1. 컴포넌트 초기화 ──────────────────────────────────────
+    # ── 1. Initialize components ────────────────────────────────
     print("\n" + "="*50)
-    print(" [1/5] 컴포넌트 초기화")
+    print(" [1/5] Initializing components")
     print("="*50)
     client     = get_mongodb_client()
     embeddings = get_embeddings()
     llm        = get_llm()
     collection = client[DB_NAME][COLLECTION_NAME]
 
-    # ── 2. 문서 로드 ─────────────────────────────────────────────
+    # ── 2. Load documents ───────────────────────────────────────
     print("\n" + "="*50)
-    print(" [2/5] 지식 베이스 문서 로드")
+    print(" [2/5] Loading knowledge base documents")
     print("="*50)
     docs = prepare_documents()
     load_documents_to_atlas(collection, embeddings, docs, force_reload=False)
 
-    # ── 3. 인덱스 자동 생성 ───────────────────────────────────────
+    # ── 3. Auto-create indexes ──────────────────────────────────
     print("\n" + "="*50)
-    print(" [3/5] Atlas 인덱스 자동 생성")
+    print(" [3/5] Setting up Atlas indexes")
     print("="*50)
     setup_indexes(collection, force_recreate=False, wait_timeout=300)
 
-    # ── 4. 예시 질문 실행 ─────────────────────────────────────────
-    # print("\n" + "="*50)
-    # print(" [4/5] 예시 질문 실행")
-    # print("="*50)
-    # sample_questions = [
-    #     "MongoDB connection pool이 고갈되었을 때 어떻게 해결하나요?",
-    #     "Replication lag이 발생했을 때 원인과 해결 방법은?",
-    #     "쿼리가 너무 느릴 때 어떻게 최적화하나요?",
-    # ]
-    # for question in sample_questions:
-    #     ask_mongodb_question(
-    #         question=question, collection=collection,
-    #         embeddings=embeddings, llm=llm, context_top_k=3, verbose=True,
-    #     )
-    #     time.sleep(1)
-
-    # ── 5. 대화형 모드 ─────────────────────────────────────────────
+    # ── 4. Run sample questions ─────────────────────────────────
     print("\n" + "="*50)
-    print(" [5/5] 대화형 Q&A 모드")
+    print(" [4/5] Running sample questions")
     print("="*50)
-    print("MongoDB 장애 관련 질문을 입력하세요. (종료: q)\n")
-    print(" 질문 예시 ")
-    print(" - MongoDB connection pool이 고갈되었을 때 어떻게 해결하나요? ")
-    print(" - Replication lag이 발생했을 때 원인과 해결 방법은?")
-    print(" - 쿼리가 너무 느릴 때 어떻게 최적화하나요? ")
+    sample_questions = [
+        "How do I resolve MongoDB connection pool exhaustion?",
+        "What are the causes and solutions for replication lag?",
+        "How do I optimize slow queries in MongoDB?",
+    ]
+    for question in sample_questions:
+        ask_mongodb_question(
+            question=question, collection=collection,
+            embeddings=embeddings, llm=llm, context_top_k=3, verbose=True,
+        )
+        time.sleep(1)
+
+    # ── 5. Interactive mode ─────────────────────────────────────
+    print("\n" + "="*50)
+    print(" [5/5] Interactive Q&A Mode")
+    print("="*50)
+    print("Ask any MongoDB troubleshooting question. (type 'q' to quit)\n")
     while True:
         try:
-            question = input("질문 > ").strip()
+            question = input("Question > ").strip()
         except (EOFError, KeyboardInterrupt):
-            print("\n프로그램을 종료합니다.")
+            print("\nExiting.")
             break
-        if question.lower() in {"q", "quit", "exit", "종료"}:
-            print("프로그램을 종료합니다.")
+        if question.lower() in {"q", "quit", "exit"}:
+            print("Exiting.")
             break
         if question:
             ask_mongodb_question(

@@ -1,131 +1,133 @@
-# Hands-on Lab - MongoDB 기술문제 답변 RAG 챗봇 개발
+# Hands-on Lab - MongoDB Troubleshooting RAG Chatbot
 
-LangChain + Voyage AI + MongoDB Atlas + OpenAI를 활용한  
-**하이브리드 검색(Hybrid Search) + RRF** 기반 RAG(Retrieval-Augmented Generation) 파이프라인
+> 🇰🇷 [한국어 버전은 여기를 클릭하세요 → README_KR.md](README_KR.md)
+
+A RAG (Retrieval-Augmented Generation) pipeline based on **Hybrid Search + RRF**,  
+built with LangChain + Voyage AI + MongoDB Atlas + OpenAI.
 
 ---
 
-## 아키텍처
+## Architecture
 
 ```
-사용자 질문
+User Question
      │
-     ├─── [벡터 검색]  voyage-4 임베딩 → $vectorSearch → 순위 목록 A
+     ├─── [Vector Search]  voyage-4 embedding → $vectorSearch → Ranked List A
      │
-     ├─── [전문 검색]  $search (Atlas Search) → 순위 목록 B
+     ├─── [Full-Text Search]  $search (Atlas Search) → Ranked List B
      │
-     └─── [RRF 융합]  1/(k+rank_A) + 1/(k+rank_B) → 최종 순위
+     └─── [RRF Fusion]  1/(k+rank_A) + 1/(k+rank_B) → Final Ranking
                 │
-                └─── 상위 문서 → GPT-4o-mini → 최종 답변
+                └─── Top Documents → GPT-4o-mini → Final Answer
 ```
 
-## 사용 기술
+## Tech Stack
 
-| 역할 | 기술 |
-|------|------|
-| 임베딩 | [Voyage AI](https://www.voyageai.com/) `voyage-4` (1024차원) |
-| 벡터 저장소 | [MongoDB Atlas](https://www.mongodb.com/atlas) Vector Search |
-| 전문 검색 | MongoDB Atlas Search (Full-Text) |
-| 검색 융합 | RRF (Reciprocal Rank Fusion) |
-| 답변 생성 | [OpenAI](https://platform.openai.com/) `gpt-4o-mini` |
-| RAG 파이프라인 | [LangChain](https://www.langchain.com/) LCEL |
-| 인덱스 자동 생성 | `pymongo` 4.7+ `SearchIndexModel` |
+| Role | Technology |
+|------|------------|
+| Embedding | [Voyage AI](https://www.voyageai.com/) `voyage-4` (1024 dimensions) |
+| Vector Store | [MongoDB Atlas](https://www.mongodb.com/atlas) Vector Search |
+| Full-Text Search | MongoDB Atlas Search |
+| Search Fusion | RRF (Reciprocal Rank Fusion) |
+| Answer Generation | [OpenAI](https://platform.openai.com/) `gpt-4o-mini` |
+| RAG Pipeline | [LangChain](https://www.langchain.com/) LCEL |
+| Auto Index Creation | `pymongo` 4.7+ `SearchIndexModel` |
 
-## RRF (Reciprocal Rank Fusion) 란?
+## What is RRF (Reciprocal Rank Fusion)?
 
-여러 검색 시스템의 결과를 순위 기반으로 통합하는 알고리즘입니다.
+An algorithm that combines results from multiple retrieval systems using rank-based scoring.
 
 ```math
-\text{RRF\_score}(d) = \sum_{i \in \text{검색시스템}} \frac{1}{k + \text{rank}_i(d)}
+\text{RRF\_score}(d) = \sum_{i \in \text{systems}} \frac{1}{k + \text{rank}_i(d)}
 ```
 
-- **벡터 검색** (시맨틱): 의미가 유사한 문서를 찾습니다
-- **전문 검색** (키워드): 정확한 키워드가 포함된 문서를 찾습니다
-- **RRF 융합**: 두 결과를 순위 기반으로 통합해 검색 품질을 향상합니다
+- **Vector Search** (Semantic): Finds documents with similar meaning
+- **Full-Text Search** (Keyword): Finds documents containing exact keywords
+- **RRF Fusion**: Combines both results by rank to improve overall retrieval quality
 
 ---
 
-## 파일 구성
+## File Structure
 
 ```
-├── mongodb_rag.py       # 메인 스크립트 (함수 기반 모듈 구조)
-├── mongodb_rag.ipynb    # Jupyter 노트북 (Step별 학습용)
-├── requirements.txt     # 의존성 패키지
-├── .env.example         # 환경 변수 템플릿
+├── mongodb_rag.py       # Main script (function-based modular structure)
+├── mongodb_rag.ipynb    # Jupyter Notebook (step-by-step tutorial)
+├── requirements.txt     # Dependencies
+├── .env.example         # Environment variable template
 └── .gitignore
 ```
 
 ---
 
-## 빠른 시작
+## Quick Start
 
-### 1. 저장소 복제
+### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/<your-username>/langchain_voyage_mdb.git
+git clone https://github.com/min-hol-repo/langchain_voyage_mdb.git
 cd langchain_voyage_mdb
 ```
 
-### 2. 패키지 설치
+### 2. Install Packages
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. 환경 변수 설정
+### 3. Set Environment Variables
 
 ```bash
 cp .env.example .env
 ```
 
-`.env` 파일을 열고 아래 3가지 키를 입력합니다:
+Open the `.env` file and fill in the following three keys:
 
 ```env
-# MongoDB Atlas 연결 문자열
-# Atlas UI → Database → Connect → Drivers 에서 확인
+# MongoDB Atlas connection string
+# Find it at: Atlas UI → Database → Connect → Drivers
 MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/
 
-# OpenAI API 키
+# OpenAI API key
 # https://platform.openai.com/api-keys
 OPENAI_API_KEY=sk-...
 
-# Voyage AI API 키
+# Voyage AI API key
 # https://dash.voyageai.com/api-keys
 VOYAGE_API_KEY=pa-...
 ```
 
-> **API 키 발급 방법**
+> **How to Get API Keys**
 >
-> **① MongoDB Atlas URI 연결 문자열 생성**
-> 1. [무료 계정 생성](https://www.mongodb.com/cloud/atlas/register)
-> 2. Atlas UI → Database → 클러스터 우측 **Connect** 클릭
-> 3. **Drivers** 선택 → Python / pymongo 선택
-> 4. 연결 문자열 복사 (`mongodb+srv://<username>:<password>@<cluster>.mongodb.net/`)
-> - 상세 가이드: [Atlas URI 연결 문자열 생성](https://www.mongodb.com/ko-kr/docs/languages/python/pymongo-driver/current/get-started/#create-a-connection-string)
+> **① MongoDB Atlas URI Connection String**
+> 1. [Create a free account](https://www.mongodb.com/cloud/atlas/register)
+> 2. Atlas UI → Database → Click **Connect** on the right side of your cluster
+> 3. Select **Drivers** → Choose Python / pymongo
+> 4. Copy the connection string (`mongodb+srv://<username>:<password>@<cluster>.mongodb.net/`)
+> - Detailed guide: [Create Atlas URI Connection String](https://www.mongodb.com/docs/languages/python/pymongo-driver/current/get-started/#create-a-connection-string)
 >
-> **② Voyage AI API 키 발급**
-> 1. MongoDB Atlas에 접속 후 좌측 메뉴에서 **Integrations** → **Voyage AI** 선택
-> 2. API 키 생성
-> - 상세 가이드: [Voyage AI API 키 생성](https://www.mongodb.com/ko-kr/docs/voyageai/quickstart/?llm-provider=anthropic#create-a-model-api-key)
+> **② Voyage AI API Key**
+> 1. In MongoDB Atlas, navigate to **Integrations** → **Voyage AI** from the left menu
+> 2. Generate an API key
+> - Detailed guide: [Create Voyage AI API Key](https://www.mongodb.com/docs/voyageai/quickstart/?llm-provider=anthropic#create-a-model-api-key)
 >
-> **③ OpenAI API 키 발급**
+> **③ OpenAI API Key**
 > - [OpenAI API Keys](https://platform.openai.com/api-keys)
 
-### 4. MongoDB Atlas 클러스터 준비
+### 4. Prepare MongoDB Atlas Cluster
 
-- **M10 이상** 유료 클러스터 권장 (Vector Search + Atlas Search 전체 지원)
-- M0 Free Tier는 Atlas Search 기능이 제한됩니다
+- **M10 or higher** cluster recommended (full Vector Search + Atlas Search support)
+- M0 Free Tier has limited Atlas Search functionality
 
-### 5. 실행
+### 5. Run
 
 ```bash
-# Python 스크립트 실행 (인덱스 자동 생성 포함)
+# Run Python script (indexes are created automatically)
 python mongodb_rag.py
 ```
 
-![실행 화면](images/image01.png)
+![Demo](images/image01.png)
 
-또는 Jupyter 노트북으로 단계별 실행:
+Or run step-by-step with the Jupyter Notebook:
 
 ```bash
 jupyter notebook mongodb_rag.ipynb
@@ -133,16 +135,16 @@ jupyter notebook mongodb_rag.ipynb
 
 ---
 
-## 주요 기능 설명
+## Key Features
 
-### 인덱스 자동 생성
+### Automatic Index Creation
 
-Atlas UI에서 수동으로 인덱스를 만들 필요 없이, 코드 실행 시 자동으로 생성됩니다.
+No need to manually create indexes in the Atlas UI — they are created automatically at runtime.
 
 ```python
 from pymongo.operations import SearchIndexModel
 
-# Vector Search 인덱스 (시맨틱 검색용)
+# Vector Search index (for semantic search)
 SearchIndexModel(
     definition={"fields": [{"type": "vector", "path": "embedding",
                             "numDimensions": 1024, "similarity": "cosine"}]},
@@ -150,7 +152,7 @@ SearchIndexModel(
     type="vectorSearch",
 )
 
-# Atlas Search 인덱스 (키워드 검색용)
+# Atlas Search index (for keyword search)
 SearchIndexModel(
     definition={"mappings": {"dynamic": False, "fields": {"text": {"type": "string"}}}},
     name="search_index",
@@ -158,55 +160,55 @@ SearchIndexModel(
 )
 ```
 
-### 하이브리드 검색
+### Hybrid Search
 
 ```python
 results = hybrid_search(
     collection=collection,
-    query="MongoDB connection pool 고갈 문제",
+    query="MongoDB connection pool exhaustion issue",
     embeddings=embeddings,
-    k=10,        # 각 검색에서 가져올 결과 수
-    rrf_k=60,    # RRF 상수 (높을수록 순위 차이 효과 완화)
+    k=10,        # Number of results per search
+    rrf_k=60,    # RRF constant (higher = less rank-difference effect)
 )
 ```
 
-### RRF 결과 출력 예시
+### RRF Output Example
 
 ```
-  RRF (Reciprocal Rank Fusion) 검색 결과
+  RRF (Reciprocal Rank Fusion) Search Results
 ===========================================================================
-  순위 문서 제목                           벡터순위  텍스트순위  RRF점수      카테고리
+  Rank  Document Title                   VecRank  TxtRank  RRF Score    Category
 ---------------------------------------------------------------------------
-  1    Connection Pool 고갈 문제           1        1          0.032787   connection
-  2    인덱스 누락으로 인한 슬로우 쿼리       3        2          0.031185   performance
-  3    Replication Lag 복제 지연 문제       2        -          0.016129   replication
+  1     Connection Pool Exhaustion       1        1        0.032787     connection
+  2     Slow Queries - Missing Index     3        2        0.031185     performance
+  3     Replication Lag                  2        -        0.016129     replication
 ===========================================================================
 ```
 
-### 지식 베이스 (Knowledge Base)
+### Knowledge Base
 
-현재 포함된 MongoDB 장애 시나리오 10가지:
+10 MongoDB troubleshooting scenarios included:
 
-| 카테고리 | 내용 |
-|----------|------|
-| `connection` | Connection Pool 고갈 |
-| `performance` | 인덱스 누락으로 인한 슬로우 쿼리 |
-| `replication` | Replication Lag, Primary 선출 실패 |
-| `memory` | WiredTiger 캐시 부족, OOM 킬러 |
-| `storage` | 디스크 공간 부족 |
-| `locking` | Lock 경합 |
-| `search` | Atlas Vector Search 인덱스 오류 |
+| Category | Content |
+|----------|---------|
+| `connection` | Connection Pool Exhaustion |
+| `performance` | Slow Queries due to Missing Indexes |
+| `replication` | Replication Lag, Primary Election Failure |
+| `memory` | WiredTiger Cache Shortage, OOM Killer |
+| `storage` | Disk Space Shortage |
+| `locking` | Lock Contention |
+| `search` | Atlas Vector Search Index Errors |
 | `backup` | Mongodump / Mongorestore |
 
 ---
 
-## 직접 질문해보기
+## Try Your Own Questions
 
 ```python
 from mongodb_rag import ask_mongodb_question
 
 answer = ask_mongodb_question(
-    question="MongoDB 서버가 갑자기 종료되었습니다. 원인과 해결 방법은?",
+    question="MongoDB server crashed unexpectedly. What are the causes and solutions?",
     collection=collection,
     embeddings=embeddings,
     llm=llm,
@@ -215,16 +217,16 @@ answer = ask_mongodb_question(
 
 ---
 
-## 참고 자료
+## References
 
-- [MongoDB Atlas Vector Search 공식 문서](https://www.mongodb.com/docs/atlas/atlas-vector-search/)
-- [MongoDB Atlas Search 공식 문서](https://www.mongodb.com/docs/atlas/atlas-search/)
-- [Voyage AI 모델 문서](https://docs.voyageai.com/docs/embeddings)
-- [LangChain MongoDB 통합](https://python.langchain.com/docs/integrations/vectorstores/mongodb_atlas/)
-- [RRF 논문 (Cormack et al., 2009)](https://plg.uwaterloo.ca/~gvcormac/cormacketal09-rrf.pdf)
+- [MongoDB Atlas Vector Search Docs](https://www.mongodb.com/docs/atlas/atlas-vector-search/)
+- [MongoDB Atlas Search Docs](https://www.mongodb.com/docs/atlas/atlas-search/)
+- [Voyage AI Model Docs](https://docs.voyageai.com/docs/embeddings)
+- [LangChain MongoDB Integration](https://python.langchain.com/docs/integrations/vectorstores/mongodb_atlas/)
+- [RRF Paper (Cormack et al., 2009)](https://plg.uwaterloo.ca/~gvcormac/cormacketal09-rrf.pdf)
 
 ---
 
-## 라이선스
+## License
 
 MIT License
