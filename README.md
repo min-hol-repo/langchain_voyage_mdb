@@ -144,7 +144,7 @@ atlas deployments start
 python mongodb_rag.py
 ```
 
-![Demo](images/image01.png)
+![Demo](images/image00.png)
 
 Or run step-by-step with the Jupyter Notebook:
 
