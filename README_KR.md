@@ -5,6 +5,8 @@
 LangChain + Voyage AI + MongoDB Atlas + OpenAI를 활용한  
 **하이브리드 검색(Hybrid Search) + RRF** 기반 RAG(Retrieval-Augmented Generation) 파이프라인
 
+> ⚠️ **MongoDB Atlas M10+ 클러스터**가 필요합니다 (`$vectorSearch` 사용).
+
 ---
 
 ## 아키텍처
@@ -12,9 +14,9 @@ LangChain + Voyage AI + MongoDB Atlas + OpenAI를 활용한
 ```
 사용자 질문
      │
-     ├─── [벡터 검색]  voyage-4 임베딩 → $vectorSearch → 순위 목록 A
+     ├─── [벡터 검색]    voyage-4 → $vectorSearch (Atlas) → 순위 목록 A
      │
-     ├─── [전문 검색]  $search (Atlas Search) → 순위 목록 B
+     ├─── [전문 검색]    $search  (Atlas Search)          → 순위 목록 B
      │
      └─── [RRF 융합]  1/(k+rank_A) + 1/(k+rank_B) → 최종 순위
                 │
@@ -26,8 +28,9 @@ LangChain + Voyage AI + MongoDB Atlas + OpenAI를 활용한
 | 역할 | 기술 |
 |------|------|
 | 임베딩 | [Voyage AI](https://www.voyageai.com/) `voyage-4` (1024차원) |
-| 벡터 저장소 | [MongoDB Atlas](https://www.mongodb.com/atlas) Vector Search |
-| 전문 검색 | MongoDB Atlas Search (Full-Text) |
+| 벡터 검색 | MongoDB Atlas `$vectorSearch` (**M10+ 필요**) |
+| 전문 검색 | MongoDB Atlas Search (`$search`) |
+| 문서 저장소 | [MongoDB Atlas](https://www.mongodb.com/atlas) |
 | 검색 융합 | RRF (Reciprocal Rank Fusion) |
 | 답변 생성 | [OpenAI](https://platform.openai.com/) `gpt-4o-mini` |
 | RAG 파이프라인 | [LangChain](https://www.langchain.com/) LCEL |
@@ -41,8 +44,8 @@ LangChain + Voyage AI + MongoDB Atlas + OpenAI를 활용한
 \text{RRF\_score}(d) = \sum_{i \in \text{검색시스템}} \frac{1}{k + \text{rank}_i(d)}
 ```
 
-- **벡터 검색** (시맨틱): 의미가 유사한 문서를 찾습니다
-- **전문 검색** (키워드): 정확한 키워드가 포함된 문서를 찾습니다
+- **벡터 검색** (시맨틱): `$vectorSearch`로 의미가 유사한 문서를 찾습니다
+- **전문 검색** (키워드): `$search`로 정확한 키워드가 포함된 문서를 찾습니다
 - **RRF 융합**: 두 결과를 순위 기반으로 통합해 검색 품질을 향상합니다
 
 ---
@@ -64,7 +67,7 @@ LangChain + Voyage AI + MongoDB Atlas + OpenAI를 활용한
 ### 1. 저장소 복제
 
 ```bash
-git clone https://github.com/<your-username>/langchain_voyage_mdb.git
+git clone https://github.com/min-hol-repo/langchain_voyage_mdb.git
 cd langchain_voyage_mdb
 ```
 
@@ -115,8 +118,24 @@ VOYAGE_API_KEY=pa-...
 
 ### 4. MongoDB Atlas 클러스터 준비
 
-- **M10 이상** 유료 클러스터 권장 (Vector Search + Atlas Search 전체 지원)
-- M0 Free Tier는 Atlas Search 기능이 제한됩니다
+> ⚠️ **`$vectorSearch` 사용을 위해 MongoDB Atlas M10+ 클러스터가 필요합니다.**  
+> Free Tier (M0)에서는 `$vectorSearch`를 사용할 수 없습니다.
+
+**M10+ 클러스터를 얻는 방법:**
+
+| 방법 | 비용 | 설명 |
+|------|------|------|
+| 신규 가입 크레딧 | **무료** | Atlas 신규 가입 시 $200 크레딧 제공 |
+| Atlas Local (Docker) | **무료** | 로컬에서 Atlas 실행, `$vectorSearch` 지원 |
+| 임시 M10+ 클러스터 | ~$0.08/시간 | 실습 후 삭제 시 소액 발생 |
+| 유료 M10+ | $57+/월 | 프로덕션 또는 지속적 사용 |
+
+**Atlas Local (Docker) — 개발 환경에 권장:**
+```bash
+# Atlas CLI 설치 후 로컬 실행
+atlas deployments setup --type local
+atlas deployments start
+```
 
 ### 5. 실행
 
@@ -139,25 +158,73 @@ jupyter notebook mongodb_rag.ipynb
 
 ### 인덱스 자동 생성
 
-Atlas UI에서 수동으로 인덱스를 만들 필요 없이, 코드 실행 시 자동으로 생성됩니다.
+두 가지 Atlas 인덱스가 런타임에 자동으로 생성됩니다 — Atlas UI에서 수동 설정 불필요.
 
 ```python
 from pymongo.operations import SearchIndexModel
 
-# Vector Search 인덱스 (시맨틱 검색용)
+# [1] Vector Search 인덱스 — $vectorSearch 시맨틱 검색 (M10+ 필요)
 SearchIndexModel(
-    definition={"fields": [{"type": "vector", "path": "embedding",
-                            "numDimensions": 1024, "similarity": "cosine"}]},
+    definition={"fields": [{"type": "vector",
+                            "path": "embedding",
+                            "numDimensions": 1024,
+                            "similarity": "cosine"}]},
     name="vector_index",
     type="vectorSearch",
 )
 
-# Atlas Search 인덱스 (키워드 검색용)
+# [2] Atlas Search 인덱스 — $search 전문 검색
 SearchIndexModel(
-    definition={"mappings": {"dynamic": False, "fields": {"text": {"type": "string"}}}},
+    definition={"mappings": {"dynamic": False,
+                             "fields": {"text":  {"type": "string"},
+                                        "title": {"type": "string"}}}},
     name="search_index",
     type="search",
 )
+```
+
+### 벡터 검색 — $vectorSearch
+
+```python
+pipeline = [
+    {
+        "$vectorSearch": {
+            "index": "vector_index",         # Atlas Vector Search 인덱스 이름
+            "path": "embedding",             # 임베딩 필드
+            "queryVector": query_embedding,  # voyage-4 쿼리 벡터 (1024차원)
+            "numCandidates": 100,            # 후보군 (limit의 10배 권장)
+            "limit": 10,                     # 최종 반환 수
+        }
+    },
+    {
+        "$project": {
+            "_id": 1, "text": 1, "title": 1, "category": 1,
+            "vector_score": {"$meta": "vectorSearchScore"},  # 코사인 유사도 점수
+        }
+    },
+]
+results = list(collection.aggregate(pipeline))
+```
+
+### 전문 검색 — $search
+
+```python
+pipeline = [
+    {
+        "$search": {
+            "index": "search_index",
+            "text": {"query": query, "path": ["text", "title"]},
+        }
+    },
+    {"$limit": 10},
+    {
+        "$project": {
+            "_id": 1, "text": 1, "title": 1, "category": 1,
+            "text_score": {"$meta": "searchScore"},
+        }
+    },
+]
+results = list(collection.aggregate(pipeline))
 ```
 
 ### 하이브리드 검색
@@ -175,14 +242,14 @@ results = hybrid_search(
 ### RRF 결과 출력 예시
 
 ```
-  RRF (Reciprocal Rank Fusion) 검색 결과
-===========================================================================
-  순위 문서 제목                           벡터순위  텍스트순위  RRF점수      카테고리
----------------------------------------------------------------------------
-  1    Connection Pool 고갈 문제           1        1          0.032787   connection
-  2    인덱스 누락으로 인한 슬로우 쿼리       3        2          0.031185   performance
-  3    Replication Lag 복제 지연 문제       2        -          0.016129   replication
-===========================================================================
+  RRF (Reciprocal Rank Fusion) Search Results
+==============================================================================
+  Rank  Document Title                   VecSearch   TextSearch  RRF Score    Category
+------------------------------------------------------------------------------
+  1     Connection Pool Exhaustion       1           1           0.032787     connection
+  2     Slow Queries - Missing Index     3           2           0.031185     performance
+  3     Replication Lag                  2           -           0.016129     replication
+==============================================================================
 ```
 
 ### 지식 베이스 (Knowledge Base)
@@ -197,7 +264,7 @@ results = hybrid_search(
 | `memory` | WiredTiger 캐시 부족, OOM 킬러 |
 | `storage` | 디스크 공간 부족 |
 | `locking` | Lock 경합 |
-| `search` | Atlas Vector Search 인덱스 오류 |
+| `search` | Atlas Search 인덱스 오류 |
 | `backup` | Mongodump / Mongorestore |
 
 ---

@@ -5,6 +5,8 @@
 A RAG (Retrieval-Augmented Generation) pipeline based on **Hybrid Search + RRF**,  
 built with LangChain + Voyage AI + MongoDB Atlas + OpenAI.
 
+> ⚠️ **Requires MongoDB Atlas M10+ cluster** for `$vectorSearch`.
+
 ---
 
 ## Architecture
@@ -12,31 +14,27 @@ built with LangChain + Voyage AI + MongoDB Atlas + OpenAI.
 ```
 User Question
      │
-     ├─── [Vector Search]     voyage-4 → FAISS (local, free) → Ranked List A
+     ├─── [Vector Search]    voyage-4 → $vectorSearch (Atlas) → Ranked List A
      │
-     ├─── [Full-Text Search]  $search (Atlas Search, works on M0) → Ranked List B
+     ├─── [Full-Text Search] $search  (Atlas Search)          → Ranked List B
      │
      └─── [RRF Fusion]  1/(k+rank_A) + 1/(k+rank_B) → Final Ranking
                 │
                 └─── Top Documents → GPT-4o-mini → Final Answer
 ```
 
-> **Why FAISS instead of `$vectorSearch`?**  
-> MongoDB Atlas `$vectorSearch` requires **M10+** cluster ($57+/month).  
-> FAISS runs locally for free — perfect for learning and development.  
-> Embeddings are stored in MongoDB and loaded into FAISS at startup.
-
 ## Tech Stack
 
 | Role | Technology |
 |------|------------|
 | Embedding | [Voyage AI](https://www.voyageai.com/) `voyage-4` (1024 dimensions) |
-| Vector Search | **[FAISS](https://github.com/facebookresearch/faiss)** (local, free — no M10+ required) |
-| Full-Text Search | MongoDB Atlas Search (`$search`, works on **Free Tier M0**) |
-| Document Storage | [MongoDB Atlas](https://www.mongodb.com/atlas) (Free Tier M0) |
+| Vector Search | MongoDB Atlas `$vectorSearch` (requires **M10+**) |
+| Full-Text Search | MongoDB Atlas Search (`$search`) |
+| Document Storage | [MongoDB Atlas](https://www.mongodb.com/atlas) |
 | Search Fusion | RRF (Reciprocal Rank Fusion) |
 | Answer Generation | [OpenAI](https://platform.openai.com/) `gpt-4o-mini` |
 | RAG Pipeline | [LangChain](https://www.langchain.com/) LCEL |
+| Auto Index Creation | `pymongo` 4.7+ `SearchIndexModel` |
 
 ## What is RRF (Reciprocal Rank Fusion)?
 
@@ -46,8 +44,8 @@ An algorithm that combines results from multiple retrieval systems using rank-ba
 \text{RRF\_score}(d) = \sum_{i \in \text{systems}} \frac{1}{k + \text{rank}_i(d)}
 ```
 
-- **Vector Search** (Semantic): Finds documents with similar meaning
-- **Full-Text Search** (Keyword): Finds documents containing exact keywords
+- **Vector Search** (Semantic): Finds documents with similar meaning using `$vectorSearch`
+- **Full-Text Search** (Keyword): Finds documents containing exact keywords using `$search`
 - **RRF Fusion**: Combines both results by rank to improve overall retrieval quality
 
 ---
@@ -120,8 +118,24 @@ VOYAGE_API_KEY=pa-...
 
 ### 4. Prepare MongoDB Atlas Cluster
 
-- **M10 or higher** cluster recommended (full Vector Search + Atlas Search support)
-- M0 Free Tier has limited Atlas Search functionality
+> ⚠️ **MongoDB Atlas M10+ cluster is required** for `$vectorSearch`.  
+> `$vectorSearch` is not available on Free Tier (M0).
+
+**Options to get an M10+ cluster:**
+
+| Option | Cost | Notes |
+|--------|------|-------|
+| New account free credit | **Free** | $200 credit for new Atlas accounts |
+| Atlas Local (Docker) | **Free** | Run Atlas locally, supports `$vectorSearch` |
+| Temporary M10+ | ~$0.08/hr | Create → use → delete after lab |
+| Paid M10+ | $57+/month | For production or ongoing use |
+
+**Atlas Local (Docker) — recommended for development:**
+```bash
+# Install Atlas CLI and run locally
+atlas deployments setup --type local
+atlas deployments start
+```
 
 ### 5. Run
 
@@ -144,25 +158,73 @@ jupyter notebook mongodb_rag.ipynb
 
 ### Automatic Index Creation
 
-No need to manually create indexes in the Atlas UI — they are created automatically at runtime.
+Both Atlas indexes are created automatically at runtime — no manual setup in the Atlas UI.
 
 ```python
 from pymongo.operations import SearchIndexModel
 
-# Vector Search index (for semantic search)
+# [1] Vector Search index — $vectorSearch semantic search (requires M10+)
 SearchIndexModel(
-    definition={"fields": [{"type": "vector", "path": "embedding",
-                            "numDimensions": 1024, "similarity": "cosine"}]},
+    definition={"fields": [{"type": "vector",
+                            "path": "embedding",
+                            "numDimensions": 1024,
+                            "similarity": "cosine"}]},
     name="vector_index",
     type="vectorSearch",
 )
 
-# Atlas Search index (for keyword search)
+# [2] Atlas Search index — $search full-text search
 SearchIndexModel(
-    definition={"mappings": {"dynamic": False, "fields": {"text": {"type": "string"}}}},
+    definition={"mappings": {"dynamic": False,
+                             "fields": {"text":  {"type": "string"},
+                                        "title": {"type": "string"}}}},
     name="search_index",
     type="search",
 )
+```
+
+### Vector Search — $vectorSearch
+
+```python
+pipeline = [
+    {
+        "$vectorSearch": {
+            "index": "vector_index",        # Atlas Vector Search index name
+            "path": "embedding",            # embedding field
+            "queryVector": query_embedding, # voyage-4 query vector (1024 dims)
+            "numCandidates": 100,           # candidate pool (10x limit recommended)
+            "limit": 10,                    # final result count
+        }
+    },
+    {
+        "$project": {
+            "_id": 1, "text": 1, "title": 1, "category": 1,
+            "vector_score": {"$meta": "vectorSearchScore"},  # cosine similarity score
+        }
+    },
+]
+results = list(collection.aggregate(pipeline))
+```
+
+### Full-Text Search — $search
+
+```python
+pipeline = [
+    {
+        "$search": {
+            "index": "search_index",
+            "text": {"query": query, "path": ["text", "title"]},
+        }
+    },
+    {"$limit": 10},
+    {
+        "$project": {
+            "_id": 1, "text": 1, "title": 1, "category": 1,
+            "text_score": {"$meta": "searchScore"},
+        }
+    },
+]
+results = list(collection.aggregate(pipeline))
 ```
 
 ### Hybrid Search
@@ -181,13 +243,13 @@ results = hybrid_search(
 
 ```
   RRF (Reciprocal Rank Fusion) Search Results
-===========================================================================
-  Rank  Document Title                   VecRank  TxtRank  RRF Score    Category
----------------------------------------------------------------------------
-  1     Connection Pool Exhaustion       1        1        0.032787     connection
-  2     Slow Queries - Missing Index     3        2        0.031185     performance
-  3     Replication Lag                  2        -        0.016129     replication
-===========================================================================
+==============================================================================
+  Rank  Document Title                   VecSearch   TextSearch  RRF Score    Category
+------------------------------------------------------------------------------
+  1     Connection Pool Exhaustion       1           1           0.032787     connection
+  2     Slow Queries - Missing Index     3           2           0.031185     performance
+  3     Replication Lag                  2           -           0.016129     replication
+==============================================================================
 ```
 
 ### Knowledge Base
@@ -202,7 +264,7 @@ results = hybrid_search(
 | `memory` | WiredTiger Cache Shortage, OOM Killer |
 | `storage` | Disk Space Shortage |
 | `locking` | Lock Contention |
-| `search` | Atlas Vector Search Index Errors |
+| `search` | Atlas Search Index Errors |
 | `backup` | Mongodump / Mongorestore |
 
 ---

@@ -2,18 +2,20 @@
 MongoDB Troubleshooting RAG (Retrieval-Augmented Generation) System
 ===================================================================
 Tech Stack:
-  - LangChain    : RAG pipeline construction
-  - Voyage AI    : voyage-4 text embeddings (1024 dimensions)
-  - MongoDB Atlas: Document storage + Full-Text Search (works with Free Tier M0)
-  - FAISS        : Local vector search (replaces $vectorSearch, no M10+ required)
-  - OpenAI       : GPT-4o-mini answer generation
-  - Hybrid Search: FAISS vector search + MongoDB $search full-text search
-  - RRF          : Reciprocal Rank Fusion result merging
+  - LangChain     : RAG pipeline construction
+  - Voyage AI     : voyage-4 text embeddings (1024 dimensions)
+  - MongoDB Atlas : Vector Search ($vectorSearch) + Atlas Search ($search)
+  - OpenAI        : GPT-4o-mini answer generation
+  - Hybrid Search : $vectorSearch (semantic) + $search (full-text)
+  - RRF           : Reciprocal Rank Fusion result merging
 
 Architecture:
-  Query → [FAISS Vector Search]        → Ranked List A  ─┐
-        → [MongoDB Atlas $search]      → Ranked List B  ─┤→ RRF → GPT-4o-mini
-                                                           └→ Final Answer
+  Query → [$vectorSearch  voyage-4 embedding]  → Ranked List A ─┐
+        → [$search  Atlas Full-Text Search  ]  → Ranked List B ─┤→ RRF → GPT-4o-mini
+                                                                  └→ Final Answer
+
+Requirements:
+  MongoDB Atlas M10+ cluster (required for $vectorSearch)
 
 Run:
   python mongodb_rag.py
@@ -23,8 +25,6 @@ import os
 import time
 from typing import List, Dict, Any, Optional
 
-import faiss
-import numpy as np
 from dotenv import load_dotenv
 import pymongo
 from pymongo import MongoClient
@@ -49,7 +49,8 @@ VOYAGE_API_KEY = os.getenv("VOYAGE_API_KEY", "")
 # MongoDB settings
 DB_NAME           = "mongodb_troubleshooting"
 COLLECTION_NAME   = "knowledge_base"
-SEARCH_INDEX_NAME = "search_index"   # Atlas Search index (full-text, works on M0)
+VECTOR_INDEX_NAME = "vector_index"   # Atlas Vector Search index ($vectorSearch)
+SEARCH_INDEX_NAME = "search_index"   # Atlas Full-Text Search index ($search)
 TEXT_FIELD        = "text"
 EMBEDDING_FIELD   = "embedding"
 
@@ -252,22 +253,24 @@ MONGODB_KNOWLEDGE_BASE = [
             "MongoDB Atlas Search Index Error Troubleshooting Guide\n\n"
             "Symptoms:\n"
             "- '$search is not allowed' error\n"
+            "- '$vectorSearch is not allowed' error\n"
             "- Empty array returned from search\n"
             "- Index status shows FAILED or BUILDING\n\n"
             "Causes:\n"
             "- Atlas Search index not created\n"
             "- Index name mismatch in code\n"
-            "- Index still building (status not READY)\n\n"
+            "- numDimensions does not match embedding model dimensions\n"
+            "- Cluster tier does not support the index type (M10+ required for vectorSearch)\n\n"
             "Solutions:\n"
-            "1. Verify Atlas Search index status in Atlas UI\n"
+            "1. Verify index status in Atlas UI\n"
             "   Atlas > Database > Search > Index Status (must be READY)\n\n"
             "2. Verify index name matches in code\n"
-            "   $search: {index: 'search_index'}  // must match exactly\n\n"
-            "3. Wait for index build to complete\n"
-            "   Large collections may take several minutes\n\n"
+            "   $vectorSearch: {index: 'vector_index'}  // must match exactly\n\n"
+            "3. Verify numDimensions matches the embedding model\n"
+            "   numDimensions: 1024  (for voyage-4)\n\n"
             "Prevention:\n"
             "- Manage index names as code constants\n"
-            "- Automate index status checks before deployment"
+            "- $vectorSearch requires Atlas M10+ cluster"
         ),
     },
     {
@@ -379,138 +382,90 @@ def load_documents_to_atlas(
     embeddings: VoyageAIEmbeddings,
     docs: List[Document],
     force_reload: bool = False,
-) -> None:
-    """
-    Upload documents with embeddings to MongoDB Atlas.
-    Embeddings are stored in MongoDB for FAISS index rebuilding on next run.
-    """
+) -> MongoDBAtlasVectorSearch:
+    """Upload documents with embeddings to MongoDB Atlas."""
     existing_count = collection.count_documents({})
 
     if not force_reload and existing_count > 0:
         print(f"✅ Using existing data ({existing_count} documents)")
-        return
+    else:
+        print(f"📥 Uploading {len(docs)} documents... (generating embeddings, may take a moment)")
+        collection.drop()
+        MongoDBAtlasVectorSearch.from_documents(
+            documents=docs,
+            embedding=embeddings,
+            collection=collection,
+            index_name=VECTOR_INDEX_NAME,
+        )
+        print(f"✅ Upload complete ({collection.count_documents({})} documents)")
 
-    print(f"📥 Uploading {len(docs)} documents... (generating embeddings, may take a moment)")
-    collection.drop()
-
-    MongoDBAtlasVectorSearch.from_documents(
-        documents=docs,
-        embedding=embeddings,
+    return MongoDBAtlasVectorSearch(
         collection=collection,
-        index_name=SEARCH_INDEX_NAME,  # used only as a label here
+        embedding=embeddings,
+        index_name=VECTOR_INDEX_NAME,
+        text_key=TEXT_FIELD,
+        embedding_key=EMBEDDING_FIELD,
     )
-    print(f"✅ Upload complete ({collection.count_documents({})} documents)")
 
 
 # ============================================================
-# FAISS Local Vector Store
+# Atlas Index Auto-Creation (pymongo 4.7+ SearchIndexModel)
 # ============================================================
 
-class FAISSVectorStore:
-    """
-    Local in-memory vector store using FAISS.
-
-    Why FAISS instead of MongoDB $vectorSearch?
-    - $vectorSearch requires Atlas M10+ cluster
-    - FAISS runs locally, works with Free Tier (M0) and any cluster
-    - Embeddings are still stored in MongoDB for persistence
-
-    Similarity: cosine (via L2-normalized inner product)
-    """
-
-    def __init__(self, dims: int = EMBEDDING_DIMS):
-        # IndexFlatIP: exact inner product search
-        # After L2 normalization, inner product == cosine similarity
-        self.index = faiss.IndexFlatIP(dims)
-        self._doc_ids: List[str] = []
-        self._docs: List[Dict] = []
-
-    def add_documents(
-        self,
-        embeddings: List[List[float]],
-        doc_ids: List[str],
-        docs: List[Dict],
-    ) -> None:
-        """Add document embeddings to the FAISS index."""
-        vectors = np.array(embeddings, dtype=np.float32)
-        faiss.normalize_L2(vectors)   # normalize → inner product = cosine similarity
-        self.index.add(vectors)
-        self._doc_ids.extend(doc_ids)
-        self._docs.extend(docs)
-
-    def search(self, query_embedding: List[float], k: int = 10) -> List[Dict]:
-        """Return the k most similar documents."""
-        if self.index.ntotal == 0:
-            return []
-        query_vec = np.array([query_embedding], dtype=np.float32)
-        faiss.normalize_L2(query_vec)
-        k = min(k, self.index.ntotal)
-        scores, indices = self.index.search(query_vec, k)
-
-        results = []
-        for score, idx in zip(scores[0], indices[0]):
-            if idx < 0:   # FAISS pads with -1 when results < k
-                continue
-            doc = dict(self._docs[idx])
-            doc["vector_score"] = float(score)
-            results.append(doc)
-        return results
-
-    @property
-    def total(self) -> int:
-        return self.index.ntotal
-
-
-def build_faiss_index(
-    collection: pymongo.collection.Collection,
-) -> FAISSVectorStore:
-    """
-    Build a FAISS index by reading embeddings stored in MongoDB.
-
-    Embeddings were saved by langchain-mongodb when documents were uploaded.
-    No additional API calls needed — we reuse stored vectors.
-    """
-    print("  Building FAISS index from stored embeddings...")
-
-    docs = list(collection.find(
-        {},
-        {"_id": 1, TEXT_FIELD: 1, "title": 1, "category": 1, "source": 1, EMBEDDING_FIELD: 1},
-    ))
-
-    if not docs:
-        raise ValueError("No documents in collection. Upload documents first.")
-
-    # Extract embeddings (remove from doc dict to avoid passing large vectors around)
-    embeddings = [doc.pop(EMBEDDING_FIELD) for doc in docs]
-    doc_ids    = [str(doc["_id"]) for doc in docs]
-
-    faiss_store = FAISSVectorStore(dims=EMBEDDING_DIMS)
-    faiss_store.add_documents(embeddings, doc_ids, docs)
-
-    print(f"  ✅ FAISS index built ({faiss_store.total} documents)")
-    return faiss_store
-
-
-# ============================================================
-# Atlas Search Index (Full-Text, works on M0)
-# ============================================================
-
-def create_search_index(
+def create_atlas_indexes(
     collection: pymongo.collection.Collection,
     force_recreate: bool = False,
 ) -> bool:
     """
-    Create Atlas Search index for full-text search.
+    Automatically create both Atlas indexes from code.
+    Requires MongoDB Atlas M10+ cluster.
 
-    Note: This is the $search (keyword) index, NOT $vectorSearch.
-    Atlas Search works on MongoDB Atlas Free Tier (M0).
-    Vector search is handled by local FAISS instead.
+    Indexes created:
+      1. vector_index  (vectorSearch) — for $vectorSearch semantic search
+      2. search_index  (search)       — for $search full-text search
+
+    Args:
+        collection    : MongoDB collection
+        force_recreate: If True, drops and recreates existing indexes
+
+    Returns:
+        True if new indexes were created
     """
     try:
         existing = {idx["name"] for idx in collection.list_search_indexes()}
     except Exception:
         existing = set()
 
+    to_create: List[SearchIndexModel] = []
+
+    # ── [1] Vector Search Index ($vectorSearch, requires M10+) ──
+    if VECTOR_INDEX_NAME in existing:
+        if force_recreate:
+            print(f"  Dropping existing index: {VECTOR_INDEX_NAME}")
+            collection.drop_search_index(VECTOR_INDEX_NAME)
+            _wait_for_index_drop(collection, VECTOR_INDEX_NAME)
+        else:
+            print(f"  ✅ Already exists: {VECTOR_INDEX_NAME}")
+
+    if VECTOR_INDEX_NAME not in existing or force_recreate:
+        to_create.append(
+            SearchIndexModel(
+                definition={
+                    "fields": [
+                        {
+                            "type": "vector",
+                            "path": EMBEDDING_FIELD,
+                            "numDimensions": EMBEDDING_DIMS,  # voyage-4: 1024 dims
+                            "similarity": "cosine",
+                        }
+                    ]
+                },
+                name=VECTOR_INDEX_NAME,
+                type="vectorSearch",
+            )
+        )
+
+    # ── [2] Atlas Search Index ($search full-text) ───────────────
     if SEARCH_INDEX_NAME in existing:
         if force_recreate:
             print(f"  Dropping existing index: {SEARCH_INDEX_NAME}")
@@ -518,25 +473,31 @@ def create_search_index(
             _wait_for_index_drop(collection, SEARCH_INDEX_NAME)
         else:
             print(f"  ✅ Already exists: {SEARCH_INDEX_NAME}")
-            return False
 
-    search_index = SearchIndexModel(
-        definition={
-            "mappings": {
-                "dynamic": False,
-                "fields": {
-                    TEXT_FIELD: {"type": "string"},
-                    "title":    {"type": "string"},
+    if SEARCH_INDEX_NAME not in existing or force_recreate:
+        to_create.append(
+            SearchIndexModel(
+                definition={
+                    "mappings": {
+                        "dynamic": False,
+                        "fields": {
+                            TEXT_FIELD: {"type": "string"},
+                            "title":    {"type": "string"},
+                        },
+                    }
                 },
-            }
-        },
-        name=SEARCH_INDEX_NAME,
-        type="search",
-    )
+                name=SEARCH_INDEX_NAME,
+                type="search",
+            )
+        )
 
-    print(f"  Requesting index creation: [{SEARCH_INDEX_NAME}]")
-    collection.create_search_indexes([search_index])
-    return True
+    if to_create:
+        names = [m.document["name"] for m in to_create]
+        print(f"  Requesting index creation: {names}")
+        collection.create_search_indexes(to_create)
+        return True
+
+    return False
 
 
 def _wait_for_index_drop(
@@ -554,60 +515,106 @@ def _wait_for_index_drop(
         time.sleep(poll_interval)
 
 
-def wait_for_search_index_ready(
+def wait_for_indexes_ready(
     collection: pymongo.collection.Collection,
+    index_names: List[str],
     timeout: int = 300,
     poll_interval: int = 5,
 ) -> bool:
-    """Poll until the Atlas Search index reaches READY status."""
-    start = time.time()
-    print(f"  Waiting for '{SEARCH_INDEX_NAME}' to become READY (max {timeout}s)...")
+    """
+    Poll until all specified indexes reach 'READY' status.
+
+    Args:
+        collection   : MongoDB collection
+        index_names  : List of index names to wait for
+        timeout      : Maximum wait time in seconds
+        poll_interval: Polling interval in seconds
+
+    Returns:
+        True if all indexes are READY, False if timed out
+    """
+    target = set(index_names)
+    start  = time.time()
+    print(f"  Waiting for indexes to become READY (max {timeout}s)...")
 
     while time.time() - start < timeout:
+        ready, parts = set(), []
         for idx in collection.list_search_indexes():
-            if idx["name"] == SEARCH_INDEX_NAME:
-                status  = idx.get("status", "UNKNOWN")
-                elapsed = int(time.time() - start)
-                print(f"  [{elapsed:>3}s] {SEARCH_INDEX_NAME}: {status}", end="\r", flush=True)
+            if idx["name"] in target:
+                status = idx.get("status", "UNKNOWN")
+                parts.append(f"{idx['name']}: {status}")
                 if status == "READY":
-                    print(f"\n  ✅ Index READY! ({elapsed}s elapsed)")
-                    return True
+                    ready.add(idx["name"])
+
+        elapsed = int(time.time() - start)
+        print(f"  [{elapsed:>3}s] {' | '.join(parts)}", end="\r", flush=True)
+
+        if ready == target:
+            print(f"\n  ✅ All indexes READY! ({elapsed}s elapsed)")
+            return True
+
         time.sleep(poll_interval)
 
-    print(f"\n  ⚠️  Timeout ({timeout}s)")
+    print(f"\n  ⚠️  Timeout ({timeout}s): some indexes are not ready yet.")
     return False
 
 
-def setup_search_index(
+def setup_indexes(
     collection: pymongo.collection.Collection,
     force_recreate: bool = False,
     wait_timeout: int = 300,
 ) -> None:
-    """Create Atlas Search index and wait for READY status."""
-    print("\n[Atlas Search Index Setup]")
-    created = create_search_index(collection, force_recreate=force_recreate)
+    """Create both Atlas indexes and wait for READY status."""
+    print("\n[Atlas Index Setup]")
+    created = create_atlas_indexes(collection, force_recreate=force_recreate)
     if created:
-        wait_for_search_index_ready(collection, timeout=wait_timeout)
+        wait_for_indexes_ready(
+            collection,
+            index_names=[VECTOR_INDEX_NAME, SEARCH_INDEX_NAME],
+            timeout=wait_timeout,
+        )
     else:
-        print("  → Index already exists. Skipping.")
+        print("  → All indexes already exist. Skipping.")
 
 
 # ============================================================
-# Hybrid Search: FAISS (Vector) + MongoDB $search (Full-Text)
+# Hybrid Search: $vectorSearch (Semantic) + $search (Full-Text)
 # ============================================================
 
 def vector_search(
-    faiss_store: FAISSVectorStore,
+    collection: pymongo.collection.Collection,
     query_embedding: List[float],
     k: int = 10,
 ) -> List[Dict[str, Any]]:
     """
-    Semantic search using local FAISS index.
+    Semantic search using MongoDB Atlas $vectorSearch.
+    Requires Atlas M10+ cluster and 'vector_index' (vectorSearch type).
 
-    Replaces MongoDB $vectorSearch — works with Atlas Free Tier (M0).
-    Embeddings are loaded from MongoDB at startup into FAISS memory.
+    Note: langchain-mongodb stores metadata fields at the top level.
+    e.g., {"text": ..., "embedding": [...], "title": ..., "category": ...}
     """
-    return faiss_store.search(query_embedding, k)
+    pipeline = [
+        {
+            "$vectorSearch": {
+                "index": VECTOR_INDEX_NAME,        # Atlas Vector Search index name
+                "path": EMBEDDING_FIELD,           # embedding field
+                "queryVector": query_embedding,    # voyage-4 query vector (1024 dims)
+                "numCandidates": k * 10,           # candidate pool (10x recommended)
+                "limit": k,                        # final result count
+            }
+        },
+        {
+            "$project": {
+                "_id": 1,
+                TEXT_FIELD: 1,
+                "title": 1,       # top-level field
+                "category": 1,
+                "source": 1,
+                "vector_score": {"$meta": "vectorSearchScore"},  # cosine similarity score
+            }
+        },
+    ]
+    return list(collection.aggregate(pipeline))
 
 
 def text_search(
@@ -617,7 +624,7 @@ def text_search(
 ) -> List[Dict[str, Any]]:
     """
     Full-text search using MongoDB Atlas $search.
-    Works on Atlas Free Tier (M0).
+    Requires 'search_index' (search type).
     """
     pipeline = [
         {
@@ -654,14 +661,14 @@ def reciprocal_rank_fusion(
     rrf_k: int = 60,
 ) -> List[Dict[str, Any]]:
     """
-    Merge FAISS vector search and Atlas full-text search results using RRF.
+    Merge $vectorSearch and $search results using RRF.
 
     RRF Formula:
         RRF_score(d) = Σ  1 / (k + rank_i(d))
 
     Args:
-        vector_results: FAISS search results
-        text_results  : Atlas $search results
+        vector_results: $vectorSearch results
+        text_results  : $search results
         rrf_k         : RRF constant k (default 60)
 
     Returns:
@@ -670,7 +677,7 @@ def reciprocal_rank_fusion(
     rrf_map: Dict[str, Dict] = {}
 
     for rank, doc in enumerate(vector_results, start=1):
-        doc_id = str(doc.get("_id", id(doc)))
+        doc_id = str(doc["_id"])
         if doc_id not in rrf_map:
             rrf_map[doc_id] = {
                 "doc": doc, "rrf_score": 0.0,
@@ -682,7 +689,7 @@ def reciprocal_rank_fusion(
         rrf_map[doc_id]["vector_score"] = doc.get("vector_score")
 
     for rank, doc in enumerate(text_results, start=1):
-        doc_id = str(doc.get("_id", id(doc)))
+        doc_id = str(doc["_id"])
         if doc_id not in rrf_map:
             rrf_map[doc_id] = {
                 "doc": doc, "rrf_score": 0.0,
@@ -698,13 +705,13 @@ def reciprocal_rank_fusion(
 
 def print_rrf_results(rrf_results: List[Dict], top_k: int = 5) -> None:
     """Print the RRF results table."""
-    SEP  = "=" * 75
-    DASH = "-" * 75
+    SEP  = "=" * 78
+    DASH = "-" * 78
     print("\n" + SEP)
     print("  RRF (Reciprocal Rank Fusion) Search Results")
     print(SEP)
-    COL1, COL2, COL3, COL4, COL5 = "Rank", "Document Title", "FAISS", "Atlas$search", "RRF Score"
-    print(f"  {COL1:<4} {COL2:<32} {COL3:<6} {COL4:<13} {COL5:<12} Category")
+    COL1, COL2, COL3, COL4, COL5 = "Rank", "Document Title", "VecSearch", "TextSearch", "RRF Score"
+    print(f"  {COL1:<4} {COL2:<32} {COL3:<10} {COL4:<11} {COL5:<12} Category")
     print(DASH)
 
     for i, result in enumerate(rrf_results[:top_k], start=1):
@@ -713,7 +720,7 @@ def print_rrf_results(rrf_results: List[Dict], top_k: int = 5) -> None:
         category = (doc.get("category") or "-")
         v_rank   = str(result["vector_rank"]) if result["vector_rank"] else "-"
         t_rank   = str(result["text_rank"])   if result["text_rank"]   else "-"
-        print(f"  {i:<4} {title:<32} {v_rank:<6} {t_rank:<13} {result['rrf_score']:.6f}   {category}")
+        print(f"  {i:<4} {title:<32} {v_rank:<10} {t_rank:<11} {result['rrf_score']:.6f}   {category}")
 
     print(SEP)
     print("\n  [Score Details]")
@@ -722,12 +729,11 @@ def print_rrf_results(rrf_results: List[Dict], top_k: int = 5) -> None:
         title  = (doc.get("title") or "Untitled")[:25]
         v_str  = f"{result['vector_score']:.4f}" if result["vector_score"] is not None else "N/A"
         t_str  = f"{result['text_score']:.4f}"   if result["text_score"]   is not None else "N/A"
-        print(f"  {i}. {title}: FAISS={v_str}, Atlas$search={t_str}, RRF={result['rrf_score']:.6f}")
+        print(f"  {i}. {title}: $vectorSearch={v_str}, $search={t_str}, RRF={result['rrf_score']:.6f}")
     print()
 
 
 def hybrid_search(
-    faiss_store: FAISSVectorStore,
     collection: pymongo.collection.Collection,
     query: str,
     embeddings: VoyageAIEmbeddings,
@@ -736,28 +742,28 @@ def hybrid_search(
     verbose: bool = True,
 ) -> List[Dict]:
     """
-    Hybrid search: FAISS vector search + MongoDB Atlas full-text search + RRF.
+    Hybrid search: $vectorSearch (semantic) + $search (full-text) + RRF fusion.
+    Requires MongoDB Atlas M10+ cluster.
 
     Args:
-        faiss_store: Local FAISS index (semantic search)
-        collection : MongoDB collection (full-text search via $search)
-        query      : Search query string
-        embeddings : Voyage AI embedding model
-        k          : Number of results per search
-        rrf_k      : RRF constant k
-        verbose    : Whether to print detailed results
+        collection: MongoDB collection
+        query     : Search query string
+        embeddings: Voyage AI embedding model
+        k         : Number of results per search
+        rrf_k     : RRF constant k
+        verbose   : Whether to print detailed results
     """
     # 1. Generate query embedding
     query_embedding = embeddings.embed_query(query)
 
-    # 2. FAISS vector search (semantic)
-    v_results = vector_search(faiss_store, query_embedding, k=k)
+    # 2. $vectorSearch — semantic search
+    v_results = vector_search(collection, query_embedding, k=k)
 
-    # 3. MongoDB Atlas full-text search (keyword)
+    # 3. $search — full-text search
     t_results = text_search(collection, query, k=k)
 
     if verbose:
-        print(f"  → FAISS vector: {len(v_results)} results  |  Atlas $search: {len(t_results)} results")
+        print(f"  → $vectorSearch: {len(v_results)} results  |  $search: {len(t_results)} results")
 
     # 4. RRF fusion
     rrf_results = reciprocal_rank_fusion(v_results, t_results, rrf_k=rrf_k)
@@ -810,7 +816,6 @@ Using the provided context, give accurate and practical answers to MongoDB troub
 
 def ask_mongodb_question(
     question: str,
-    faiss_store: FAISSVectorStore,
     collection: pymongo.collection.Collection,
     embeddings: VoyageAIEmbeddings,
     llm: ChatOpenAI,
@@ -820,14 +825,13 @@ def ask_mongodb_question(
     verbose: bool = True,
 ) -> str:
     """Answer a MongoDB troubleshooting question using RAG + Hybrid Search."""
-    SEP = "=" * 75
+    SEP = "=" * 78
     print(f"\n{SEP}")
     print(f"  Question: {question}")
     print(SEP)
 
     print("\n[Searching...]")
     rrf_results = hybrid_search(
-        faiss_store=faiss_store,
         collection=collection,
         query=question,
         embeddings=embeddings,
@@ -841,7 +845,7 @@ def ask_mongodb_question(
     print("[Generating answer...]")
     answer = build_rag_chain(llm).invoke({"context": context, "question": question})
 
-    DASH = "-" * 75
+    DASH = "-" * 78
     print(f"\n{DASH}")
     print("  [Answer]")
     print(DASH)
@@ -859,7 +863,7 @@ def main():
 
     # ── 1. Initialize components ────────────────────────────────
     print("\n" + "="*55)
-    print(" [1/5] Initializing components")
+    print(" [1/4] Initializing components")
     print("="*55)
     client     = get_mongodb_client()
     embeddings = get_embeddings()
@@ -868,26 +872,20 @@ def main():
 
     # ── 2. Upload documents to MongoDB ──────────────────────────
     print("\n" + "="*55)
-    print(" [2/5] Loading knowledge base documents")
+    print(" [2/4] Loading knowledge base documents")
     print("="*55)
     docs = prepare_documents()
     load_documents_to_atlas(collection, embeddings, docs, force_reload=False)
 
-    # ── 3. Build FAISS index from stored embeddings ─────────────
+    # ── 3. Create Atlas indexes (vector + search) ────────────────
     print("\n" + "="*55)
-    print(" [3/5] Building local FAISS vector index")
+    print(" [3/4] Setting up Atlas indexes")
     print("="*55)
-    faiss_store = build_faiss_index(collection)
+    setup_indexes(collection, force_recreate=False, wait_timeout=300)
 
-    # ── 4. Setup Atlas Search index (full-text) ──────────────────
+    # ── 4. Run sample questions ─────────────────────────────────
     print("\n" + "="*55)
-    print(" [4/5] Setting up Atlas Search index (full-text)")
-    print("="*55)
-    setup_search_index(collection, force_recreate=False, wait_timeout=300)
-
-    # ── 5. Run sample questions ─────────────────────────────────
-    print("\n" + "="*55)
-    print(" [5/5] Running sample questions")
+    print(" [4/4] Running sample questions")
     print("="*55)
     sample_questions = [
         "How do I resolve MongoDB connection pool exhaustion?",
@@ -897,7 +895,6 @@ def main():
     for question in sample_questions:
         ask_mongodb_question(
             question=question,
-            faiss_store=faiss_store,
             collection=collection,
             embeddings=embeddings,
             llm=llm,
@@ -922,7 +919,6 @@ def main():
         if question:
             ask_mongodb_question(
                 question=question,
-                faiss_store=faiss_store,
                 collection=collection,
                 embeddings=embeddings,
                 llm=llm,
