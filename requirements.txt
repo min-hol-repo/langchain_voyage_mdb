@@ -14,9 +14,13 @@ openai>=1.40.0
 langchain-voyageai>=0.1.0
 voyageai>=0.3.0
 
-# Vector Store - MongoDB Atlas
+# Vector Store - MongoDB Atlas (document storage + full-text search)
 langchain-mongodb>=0.2.0
 pymongo>=4.7.0
+
+# Local Vector Search - FAISS (works with MongoDB Atlas Free Tier M0)
+faiss-cpu>=1.7.4
+numpy>=1.24.0
 
 # Environment variables
 python-dotenv>=1.0.0

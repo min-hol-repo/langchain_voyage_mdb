@@ -12,26 +12,31 @@ built with LangChain + Voyage AI + MongoDB Atlas + OpenAI.
 ```
 User Question
      │
-     ├─── [Vector Search]  voyage-4 embedding → $vectorSearch → Ranked List A
+     ├─── [Vector Search]     voyage-4 → FAISS (local, free) → Ranked List A
      │
-     ├─── [Full-Text Search]  $search (Atlas Search) → Ranked List B
+     ├─── [Full-Text Search]  $search (Atlas Search, works on M0) → Ranked List B
      │
      └─── [RRF Fusion]  1/(k+rank_A) + 1/(k+rank_B) → Final Ranking
                 │
                 └─── Top Documents → GPT-4o-mini → Final Answer
 ```
 
+> **Why FAISS instead of `$vectorSearch`?**  
+> MongoDB Atlas `$vectorSearch` requires **M10+** cluster ($57+/month).  
+> FAISS runs locally for free — perfect for learning and development.  
+> Embeddings are stored in MongoDB and loaded into FAISS at startup.
+
 ## Tech Stack
 
 | Role | Technology |
 |------|------------|
 | Embedding | [Voyage AI](https://www.voyageai.com/) `voyage-4` (1024 dimensions) |
-| Vector Store | [MongoDB Atlas](https://www.mongodb.com/atlas) Vector Search |
-| Full-Text Search | MongoDB Atlas Search |
+| Vector Search | **[FAISS](https://github.com/facebookresearch/faiss)** (local, free — no M10+ required) |
+| Full-Text Search | MongoDB Atlas Search (`$search`, works on **Free Tier M0**) |
+| Document Storage | [MongoDB Atlas](https://www.mongodb.com/atlas) (Free Tier M0) |
 | Search Fusion | RRF (Reciprocal Rank Fusion) |
 | Answer Generation | [OpenAI](https://platform.openai.com/) `gpt-4o-mini` |
 | RAG Pipeline | [LangChain](https://www.langchain.com/) LCEL |
-| Auto Index Creation | `pymongo` 4.7+ `SearchIndexModel` |
 
 ## What is RRF (Reciprocal Rank Fusion)?
 
